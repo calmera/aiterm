@@ -1,0 +1,131 @@
+# BSP target selection
+
+## Espressif devkits
+if(CONFIG_BSP_TARGET_ESP32_P4_FUNCTION_EV_BOARD)
+    set(BSP_TARGET "esp32-p4-function-ev-board")
+elseif(CONFIG_BSP_TARGET_ESP32_S31_KORVO_1)
+    set(BSP_TARGET "esp32-s31-korvo-1")
+
+## Nicolai Electronics products
+elseif (CONFIG_BSP_TARGET_TANMATSU)
+    set(BSP_TARGET "tanmatsu")
+elseif(CONFIG_BSP_TARGET_KAMI)
+    set(BSP_TARGET "kami")
+
+## Badge.Team badges
+elseif(CONFIG_BSP_TARGET_MCH2022)
+    set(BSP_TARGET "mch2022")
+elseif(CONFIG_BSP_TARGET_HACKERHOTEL_2024)
+    set(BSP_TARGET "hackerhotel-2024")
+
+## 3rd party badges
+elseif(CONFIG_BSP_TARGET_BORNHACK_2025_CIRCLE)
+    set(BSP_TARGET "bornhack-2025-circle")
+elseif(CONFIG_BSP_TARGET_BORNHACK_2024_POV)
+    set(BSP_TARGET "bornhack-2024-pov")
+elseif(CONFIG_BSP_TARGET_HACKADAY2025)
+    set(BSP_TARGET "hackaday2025")
+elseif(CONFIG_BSP_TARGET_WHY2025)
+    set(BSP_TARGET "why2025")
+
+## Other devices
+elseif(CONFIG_BSP_TARGET_HELTECV3)
+    set(BSP_TARGET "heltecv3")
+
+## Fallback
+else()
+    set(BSP_TARGET "stub")
+endif()
+
+# BSP requirements for all targets
+
+set(COMMON_BSP_REQUIREMENTS
+    esp_driver_i2s
+    esp_driver_i2c
+    esp_driver_spi
+    esp_driver_gpio
+    esp_driver_sdmmc
+    sdmmc
+    fatfs
+    vfs
+    "esp_lcd"
+    "ssd1619"
+    "bootloader_support"
+    "tca8418"
+)
+
+# BSP requirements only used for ESP32 targets
+
+set(ESP32_BSP_REQUIREMENTS
+    "espressif__esp_lcd_ili9341"
+    "badgeteam__mch2022-rp2040"
+)
+
+# BSP requirements only used on for ESP32-P4 targets
+
+set(ESP32P4_BSP_REQUIREMENTS
+    "nicolaielectronics__tanmatsu_coprocessor"
+    "nicolaielectronics__mipi_dsi_abstraction"
+    "es8156"
+    "esp_lcd_st7703"   # vendored: was injected by the component manager
+    "bmi270"
+)
+
+# BSP requirements only used on for ESP32-S3 targets
+set(ESP32S3_BSP_REQUIREMENTS
+)
+
+# -------------------------
+
+set(BSP_REQUIRES ${COMMON_BSP_REQUIREMENTS})
+
+if("${IDF_TARGET}" STREQUAL "esp32")
+    list(APPEND BSP_REQUIRES ${ESP32_BSP_REQUIREMENTS})
+elseif("${IDF_TARGET}" STREQUAL "esp32p4")
+    list(APPEND BSP_REQUIRES ${ESP32P4_BSP_REQUIREMENTS})
+elseif("${IDF_TARGET}" STREQUAL "esp32s3")
+    list(APPEND BSP_REQUIRES ${ESP32S3_BSP_REQUIREMENTS})
+else()
+    message(WARNING "BSP: unsupported target ${target}")
+endif()
+
+if (NOT DEFINED BSP_SRCS)
+    file(GLOB BSP_SRCS
+        "targets/${BSP_TARGET}/*.c"
+    )
+endif()
+
+if (NOT DEFINED COMMON_BSP_SRCS)
+    file(GLOB COMMON_BSP_SRCS
+        "common/*.c"
+    )
+endif()
+
+idf_component_register(
+    SRCS ${BSP_SRCS} ${COMMON_BSP_SRCS}
+    INCLUDE_DIRS "." "common"
+    REQUIRES ${BSP_REQUIRES}
+    WHOLE_ARCHIVE
+)
+
+file(GLOB BSP_STUB_SRCS
+    "stub/*.c"
+)
+
+add_library(
+    bsp_stub
+    STATIC
+    ${BSP_STUB_SRCS}
+)
+
+target_include_directories(
+    bsp_stub
+    PUBLIC
+    "."
+    "$<TARGET_PROPERTY:${COMPONENT_LIB},INTERFACE_INCLUDE_DIRECTORIES>"
+)
+
+target_link_libraries(${COMPONENT_LIB} PRIVATE bsp_stub)
+
+include(package_manager)
+cu_pkg_define_version(${CMAKE_CURRENT_LIST_DIR})

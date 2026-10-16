@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+# All dependencies are vendored under components/ (the ESP component registry is not
+# used), so make sure the component manager never tries to resolve anything.
+set(ENV{IDF_COMPONENT_MANAGER} 0)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(ai-terminal)

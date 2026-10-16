@@ -1,0 +1,17 @@
+dependencies:
+  idf:
+    version: ">=6.0.2"
+  badgeteam/badge-bsp:
+    version: ">=1.1.0"
+  badgeteam/custom-certificates:
+    version: ">=1.0.0"
+  nicolaielectronics/wifi-manager:
+    version: ">=0.1.2"
+  nicolaielectronics/esp-wifi-remote-tanmatsu:
+    version: "^1.4.2"
+    rules:
+      - if: target == esp32p4
+  nicolaielectronics/esp-hosted-tanmatsu:
+    version: "=2.12.3~1"
+    rules:
+      - if: target == esp32p4

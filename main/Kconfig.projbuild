@@ -1,0 +1,41 @@
+menu "ai-terminal"
+
+    config AITERM_FW_VERSION
+        string "Firmware version string"
+        default "0.1.0"
+
+    choice AITERM_DISPLAY_ROTATION
+        prompt "Display rotation"
+        default AITERM_DISPLAY_ROTATION_90
+        help
+            The WHY2025 badge BSP reports a default rotation of 90 degrees (the launcher
+            renders with pax orientation ROT_CCW, which equals LVGL ROTATION_90).
+        config AITERM_DISPLAY_ROTATION_0
+            bool "0"
+        config AITERM_DISPLAY_ROTATION_90
+            bool "90"
+        config AITERM_DISPLAY_ROTATION_180
+            bool "180"
+        config AITERM_DISPLAY_ROTATION_270
+            bool "270"
+    endchoice
+
+    config AITERM_DRAW_BUF_LINES
+        int "LVGL draw buffer height (lines)"
+        default 60
+        help
+            Two partial draw buffers of 720 x N x 3 bytes are allocated in PSRAM.
+
+    config AITERM_SSH
+        bool "Enable SSH mode (libssh2 over mbedTLS)"
+        default y
+
+    config AITERM_VOICE
+        bool "Enable voice (STT/TTS) — not implemented"
+        default n
+
+    config AITERM_SCROLLBACK_LINES
+        int "Scrollback lines kept in PSRAM"
+        default 2000
+
+endmenu

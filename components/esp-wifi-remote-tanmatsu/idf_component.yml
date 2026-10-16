@@ -1,0 +1,10 @@
+dependencies:
+  nicolaielectronics/esp-hosted-tanmatsu:
+    rules:
+    - if: target in [esp32h2, esp32p4]
+    version: '>=2.12.3'
+  espressif/wifi_remote_over_eppp:
+    version: '>=0.1'
+  idf:
+    version: '>=5.3'
+description: Utility wrapper for esp_wifi functionality on remote targets

@@ -1,0 +1,75 @@
+// Board support package API: Generic stub implementation
+// SPDX-FileCopyrightText: 2025 Nicolai Electronics
+// SPDX-License-Identifier: MIT
+
+#include <stdint.h>
+#include "bsp/input.h"
+#include "esp_check.h"
+#include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+
+static char const* TAG = "BSP INPUT";
+
+static QueueHandle_t event_queue = NULL;
+
+esp_err_t __attribute__((weak)) bsp_input_initialize(void) {
+    if (event_queue == NULL) {
+        event_queue = xQueueCreate(32, sizeof(bsp_input_event_t));
+        ESP_RETURN_ON_FALSE(event_queue, ESP_ERR_NO_MEM, TAG, "Failed to create input event queue");
+    }
+    return ESP_OK;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_get_queue(QueueHandle_t* out_queue) {
+    if (out_queue == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (event_queue == NULL) {
+        return ESP_FAIL;
+    }
+    *out_queue = event_queue;
+    return ESP_OK;
+}
+
+bool __attribute__((weak)) bsp_input_needs_on_screen_keyboard(void) {
+    return false;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_get_backlight_brightness(uint8_t* out_percentage) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_set_backlight_brightness(uint8_t percentage) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_read_navigation_key(bsp_input_navigation_key_t key, bool* out_state) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_read_scancode(bsp_input_scancode_t key, bool* out_state) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_read_action(bsp_input_action_type_t action, bool* out_state) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_get_touch_coordinates(uint16_t* out_x, uint16_t* out_y,
+                                                                uint16_t* out_strength, uint8_t* out_count,
+                                                                uint8_t max_count) {
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t __attribute__((weak)) bsp_input_inject_event(bsp_input_event_t* event) {
+    if (event == NULL || event_queue == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (xQueueSend(event_queue, event, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    return ESP_OK;
+}

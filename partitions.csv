@@ -1,0 +1,7 @@
+# ESP-IDF Partition Table for ai-terminal (16 MB flash, ESP32-P4)
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      ,         0x10000,
+otadata,    data, ota,      ,         0x2000,
+phy_init,   data, phy,      ,         0x1000,
+factory,    app,  factory,  ,         0x600000,
+storage,    data, spiffs,   ,         0x800000,
