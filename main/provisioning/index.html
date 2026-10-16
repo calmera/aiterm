@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai-terminal setup</title>
+<style>
+:root{color-scheme:light dark;--bg:#111;--fg:#e6e6e6;--mu:#8a8a8a;--ok:#2ea043;--err:#f85149;--bd:#333}
+@media (prefers-color-scheme:light){:root{--bg:#f4f4f4;--fg:#111;--bd:#ccc}}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;font:15px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--bg);color:var(--fg);max-width:720px;margin:0 auto}
+h1{font-size:18px;margin:0 0 16px}h2{font-size:15px;margin:24px 0 8px;border-bottom:1px solid var(--bd);padding-bottom:4px}
+label{display:block;color:var(--mu);margin-top:10px;font-size:13px}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--bd);background:transparent;color:var(--fg);font:inherit;border-radius:0}
+textarea{min-height:120px}
+button{padding:8px 12px;border:1px solid var(--fg);background:transparent;color:var(--fg);font:inherit;cursor:pointer;margin:8px 8px 0 0;border-radius:0}
+button.primary{background:var(--fg);color:var(--bg)}
+.row{display:flex;gap:8px;align-items:flex-end}.row>*{flex:1}.row>button{flex:0}
+.item{border:1px solid var(--bd);padding:8px;margin-top:8px}
+.msg{margin-top:8px;color:var(--mu);white-space:pre-wrap}.ok{color:var(--ok)}.err{color:var(--err)}
+small{color:var(--mu)}
+</style>
+</head>
+<body>
+<h1>ai-terminal setup</h1>
+<div id="status" class="msg">loading…</div>
+
+<h2>1. Wi-Fi</h2>
+<div class="row">
+  <div><label>SSID</label><input id="wifi_ssid" list="ssids" autocomplete="off"><datalist id="ssids"></datalist></div>
+  <button onclick="scan()">Scan</button>
+</div>
+<label>Password</label><input id="wifi_pass" type="password" autocomplete="off">
+<button onclick="wifiConnect()">Connect</button>
+<div id="wifi_msg" class="msg"></div>
+
+<h2>2. Inference</h2>
+<label>Provider</label>
+<select id="inf_provider"><option value="openai">OpenAI-compatible (OpenAI, Ollama, vLLM, LiteLLM…)</option><option value="anthropic">Anthropic</option></select>
+<label>Base URL <small>(API root, e.g. https://api.openai.com/v1 · http://192.168.1.10:11434/v1 · https://api.anthropic.com/v1)</small></label><input id="inf_url">
+<label>API key <small>(may be empty for local servers; shown masked once saved)</small></label><input id="inf_key" type="password" autocomplete="off">
+<label>Model</label><input id="inf_model">
+<label>System prompt <small>(optional, appended to the device prompt)</small></label><textarea id="inf_prompt" style="min-height:70px"></textarea>
+<button onclick="testInference()">Test</button>
+<div id="inf_msg" class="msg"></div>
+
+<h2>3. MCP servers</h2>
+<div id="mcp_list"></div>
+<button onclick="addMcp()">Add server</button>
+
+<h2>4. SSH hosts</h2>
+<div id="ssh_list"></div>
+<button onclick="addSsh()">Add host</button>
+
+<h2>5. Device</h2>
+<label>Theme</label><select id="ui_theme"><option value="dark">dark</option><option value="light">light</option></select>
+<label>Font size</label><select id="ui_font"><option value="small">small</option><option value="medium">medium</option><option value="large">large</option></select>
+<label>Default mode</label><select id="ui_mode"><option value="ai">AI</option><option value="ssh">SSH</option></select>
+
+<h2>6. Import / Export</h2>
+<small>The JSON below is the full configuration (secrets masked). Paste a configuration and press Import to load it into the form.</small>
+<textarea id="json"></textarea>
+<button onclick="exportJson()">Export from form</button>
+<button onclick="importJson()">Import into form</button>
+
+<h2>7. Save</h2>
+<button class="primary" onclick="save(false)">Save</button>
+<button onclick="save(true)">Save &amp; reboot</button>
+<button onclick="factoryReset()" style="float:right;border-color:var(--err);color:var(--err)">Factory reset</button>
+<div id="save_msg" class="msg"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let cfg={version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],ui:{}};
+const MASK='••••';
+function api(path,body){return fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{}).then(r=>r.json());}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function fill(){
+  $('wifi_ssid').value=cfg.wifi.ssid||'';$('wifi_pass').value=cfg.wifi.password||'';
+  $('inf_provider').value=cfg.inference.provider||'openai';$('inf_url').value=cfg.inference.base_url||'';
+  $('inf_key').value=cfg.inference.api_key||'';$('inf_model').value=cfg.inference.model||'';$('inf_prompt').value=cfg.inference.system_prompt||'';
+  $('ui_theme').value=cfg.ui.theme||'dark';$('ui_font').value=cfg.ui.font_size||'medium';$('ui_mode').value=cfg.ui.default_mode||'ai';
+  renderMcp();renderSsh();
+}
+function renderMcp(){
+  $('mcp_list').innerHTML=cfg.mcp_servers.map((m,i)=>`<div class="item">
+   <label>Name</label><input value="${esc(m.name)}" oninput="cfg.mcp_servers[${i}].name=this.value">
+   <label>URL</label><input value="${esc(m.url)}" oninput="cfg.mcp_servers[${i}].url=this.value">
+   <div class="row"><div><label>Auth header</label><input value="${esc(m.auth_header||'Authorization')}" oninput="cfg.mcp_servers[${i}].auth_header=this.value"></div>
+   <div><label>Auth value <small>(e.g. Bearer …)</small></label><input type="password" value="${esc(m.auth_value)}" oninput="cfg.mcp_servers[${i}].auth_value=this.value"></div></div>
+   <label><input type="checkbox" style="width:auto" ${m.enabled!==false?'checked':''} onchange="cfg.mcp_servers[${i}].enabled=this.checked"> enabled</label>
+   <button onclick="testMcp(${i})">Connect</button><button onclick="cfg.mcp_servers.splice(${i},1);renderMcp()">Remove</button>
+   <div id="mcp_msg${i}" class="msg"></div></div>`).join('');
+}
+function renderSsh(){
+  $('ssh_list').innerHTML=cfg.ssh_hosts.map((h,i)=>`<div class="item">
+   <div class="row"><div><label>Name</label><input value="${esc(h.name)}" oninput="cfg.ssh_hosts[${i}].name=this.value"></div>
+   <div><label>Host</label><input value="${esc(h.host)}" oninput="cfg.ssh_hosts[${i}].host=this.value"></div>
+   <div style="flex:0 0 90px"><label>Port</label><input value="${esc(h.port||22)}" oninput="cfg.ssh_hosts[${i}].port=parseInt(this.value)||22"></div></div>
+   <div class="row"><div><label>User</label><input value="${esc(h.user)}" oninput="cfg.ssh_hosts[${i}].user=this.value"></div>
+   <div><label>Password</label><input type="password" value="${esc(h.password)}" oninput="cfg.ssh_hosts[${i}].password=this.value"></div></div>
+   <button onclick="cfg.ssh_hosts.splice(${i},1);renderSsh()">Remove</button></div>`).join('');
+}
+function addMcp(){cfg.mcp_servers.push({name:'',url:'',auth_header:'Authorization',auth_value:'',enabled:true});renderMcp();}
+function addSsh(){cfg.ssh_hosts.push({name:'',host:'',port:22,user:'',password:''});renderSsh();}
+function collect(){
+  cfg.wifi={ssid:$('wifi_ssid').value,password:$('wifi_pass').value};
+  cfg.inference={provider:$('inf_provider').value,base_url:$('inf_url').value.trim(),api_key:$('inf_key').value,model:$('inf_model').value.trim(),system_prompt:$('inf_prompt').value};
+  cfg.ui={theme:$('ui_theme').value,font_size:$('ui_font').value,default_mode:$('ui_mode').value};
+  return cfg;
+}
+function msg(id,text,cls){const e=$(id);e.textContent=text;e.className='msg '+(cls||'');}
+async function load(){
+  try{cfg=await api('/api/config');fill();msg('status','connected to device');pollStatus();}
+  catch(e){msg('status','could not load configuration: '+e,'err');}
+}
+async function scan(){
+  msg('wifi_msg','scanning…');
+  try{const r=await api('/api/wifi/scan');$('ssids').innerHTML=(r.networks||[]).map(n=>`<option value="${esc(n.ssid)}">${esc(n.ssid)} (${n.rssi} dBm${n.secure?', secured':''})</option>`).join('');
+    msg('wifi_msg',(r.networks||[]).length+' networks found — pick one from the SSID field');}
+  catch(e){msg('wifi_msg','scan failed','err');}
+}
+let pollTimer=null;
+async function pollStatus(){
+  try{const s=await api('/api/wifi/status');
+    let t='Wi-Fi: '+s.state+(s.ssid?' ('+s.ssid+')':'')+(s.ip?' · IP '+s.ip+' · also reachable at http://'+s.ip+'/':'')+(s.error?' · '+s.error:'');
+    msg('status',t,s.state==='connected'?'ok':(s.state==='failed'?'err':''));
+  }catch(e){}
+  clearTimeout(pollTimer);pollTimer=setTimeout(pollStatus,3000);
+}
+async function wifiConnect(){
+  msg('wifi_msg','connecting…');
+  try{const r=await api('/api/wifi/connect',{ssid:$('wifi_ssid').value,password:$('wifi_pass').value});
+    msg('wifi_msg',r.ok?'connecting — the status line above shows the result (keep this page open; the hotspot stays up)':r.error,r.ok?'':'err');}
+  catch(e){msg('wifi_msg','request failed','err');}
+}
+async function testInference(){
+  collect();msg('inf_msg','testing…');
+  try{const r=await api('/api/inference/test',{inference:cfg.inference});msg('inf_msg',r.ok?'OK: '+(r.reply||''):'error: '+r.error,r.ok?'ok':'err');}
+  catch(e){msg('inf_msg','request failed','err');}
+}
+async function testMcp(i){
+  const m=cfg.mcp_servers[i];msg('mcp_msg'+i,'connecting…');
+  try{const r=await api('/api/mcp/test',{url:m.url,auth_header:m.auth_header,auth_value:m.auth_value});
+    msg('mcp_msg'+i,r.ok?'OK — tools: '+(r.tools||[]).join(', '):'error: '+r.error,r.ok?'ok':'err');}
+  catch(e){msg('mcp_msg'+i,'request failed','err');}
+}
+function exportJson(){collect();$('json').value=JSON.stringify(cfg,null,1);}
+function importJson(){try{const o=JSON.parse($('json').value);cfg=Object.assign({version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],ui:{}},o);fill();msg('save_msg','imported into the form — press Save to store it');}catch(e){msg('save_msg','invalid JSON: '+e,'err');}}
+async function save(reboot){
+  collect();msg('save_msg','saving…');
+  try{const r=await api('/api/config',cfg);
+    if(!r.ok){msg('save_msg','error: '+r.error,'err');return;}
+    msg('save_msg','saved','ok');
+    if(reboot){await api('/api/reboot',{});msg('save_msg','saved — rebooting','ok');}
+    else{cfg=await api('/api/config');fill();}
+  }catch(e){msg('save_msg','request failed','err');}
+}
+async function factoryReset(){if(!confirm('Erase all settings and reboot into setup?'))return;try{await api('/api/reset',{});msg('save_msg','erased — rebooting','ok');}catch(e){}}
+load();
+</script>
+</body>
+</html>
