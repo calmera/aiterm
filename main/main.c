@@ -31,6 +31,8 @@ static bool        s_wifi_ok = false;
 static bool        s_first_boot = false;
 
 const char* aiterm_version(void) { return CONFIG_AITERM_FW_VERSION; }
+static void mcp_refresh_async(void);
+static void update_status_line(void);
 
 // ---------------------------------------------------------------------------------------
 // Status line
@@ -79,7 +81,7 @@ static void start_provisioning_ui(void) {
 static void cb_mode_changed(void) { update_status_line(); tui_appendf(TUI_STYLE_SYSTEM, "mode: %s", app_config()->ui.default_mode == CFG_MODE_SSH ? "SSH" : "AI"); }
 static void cb_theme_changed(void) { apply_ui_config(); }
 static void cb_font_changed(void) { apply_ui_config(); }
-static void cb_mcp_toggled(int index) { (void)index; }
+static void cb_mcp_toggled(int index) { (void)index; mcp_refresh_async(); }
 static void cb_setup(void) { start_provisioning_ui(); }
 static void cb_forget_wifi(void) {
     app_config_t* c = app_config();
@@ -104,7 +106,18 @@ static const settings_callbacks_t s_settings_cb = {
     .on_about = cb_about, .on_ssh_host_changed = cb_ssh_host_changed,
 };
 
-static void config_changed_cb(void* arg) { (void)arg; apply_ui_config(); }
+static void mcp_done_cb(void* arg) { (void)arg; update_status_line(); tui_appendf(TUI_STYLE_MUTED, "MCP: %d tools from %d server(s)", tools_mcp_count(), app_config()->mcp_count); }
+static void mcp_refresh_task(void* arg) {
+    (void)arg;
+    mcp_client_refresh_all();
+    ui_post(mcp_done_cb, NULL);
+    vTaskDelete(NULL);
+}
+static void mcp_refresh_async(void) {
+    if (!wifi_sta_connected() || app_config()->mcp_count == 0) return;
+    xTaskCreatePinnedToCore(mcp_refresh_task, "mcp", 12288, NULL, 4, NULL, 1);
+}
+static void config_changed_cb(void* arg) { (void)arg; apply_ui_config(); mcp_refresh_async(); }
 void app_config_changed(void) { ui_post(config_changed_cb, NULL); }
 
 // Hooks used by the provisioning API (replaced with real implementations in later phases).
@@ -165,6 +178,9 @@ static void net_boot_task(void* arg) {
         wifi_sta_connect(c->wifi.ssid, c->wifi.password);
         if (!wifi_sta_wait(20000)) {
             ESP_LOGW(TAG, "wifi connect failed: %s", wifi_sta_last_error());
+        } else if (c->mcp_count > 0) {
+            mcp_client_refresh_all();
+            ui_post(mcp_done_cb, NULL);
         }
     } else {
         s_first_boot = true;
@@ -184,6 +200,24 @@ static void ui_task(void* arg) {
     tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
     xTaskCreatePinnedToCore(net_boot_task, "netboot", 8192, NULL, 5, NULL, 1);
     ui_task_loop();
+}
+
+// Logs when PSRAM runs low (< 2 MB free) so leaks show up in the serial log.
+static void heap_watchdog_task(void* arg) {
+    (void)arg;
+    bool warned = false;
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        size_t psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        size_t internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        if (psram < 2 * 1024 * 1024) {
+            if (!warned) ESP_LOGW(TAG, "low PSRAM: %u KB free (internal %u KB)", (unsigned)(psram / 1024), (unsigned)(internal / 1024));
+            warned = true;
+        } else {
+            warned = false;
+        }
+        if (internal < 48 * 1024) ESP_LOGW(TAG, "low internal heap: %u KB free", (unsigned)(internal / 1024));
+    }
 }
 
 static void mount_storage(void) {
@@ -214,4 +248,5 @@ void app_main(void) {
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
     xTaskCreatePinnedToCore(ui_task, "ui", 16384, NULL, 5, NULL, 0);
+    xTaskCreate(heap_watchdog_task, "heapwd", 3072, NULL, 1, NULL);
 }
