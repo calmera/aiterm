@@ -27,7 +27,7 @@ menu "ai-terminal"
             Two partial draw buffers of 720 x N x 3 bytes are allocated in PSRAM.
 
     config AITERM_SSH
-        bool "Enable SSH mode (libssh2 over mbedTLS)"
+        bool "Enable SSH mode (wolfSSH + wolfSSL)"
         default y
 
     config AITERM_VOICE

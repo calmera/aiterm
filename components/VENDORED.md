@@ -21,3 +21,5 @@
 | cjson | /root/Work/refs/csrc/cJSON | 6d9f244 | 1.7.19 |
 | qrcodegen | /root/Work/refs/csrc/QR-Code-generator | 3c6d0b3 | - |
 | bmi270 | /root/Work/refs/csrc/esp32-component-bmi270 | 13e136e | ? |
+| wolfssl | /root/Work/refs/why2025-badge-firmware/sdk_apps/sshterm/thirdparty/wolfssl-5.8.2 (via why2025-badge-firmware b19bd01) | - | 5.8.2 |
+| wolfssh | /root/Work/refs/why2025-badge-firmware/sdk_apps/sshterm/thirdparty/wolfssh-1.4.20 (via why2025-badge-firmware) | - | 1.4.20 |

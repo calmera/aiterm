@@ -32,6 +32,9 @@ idf_component_register(
         lvgl
         cjson
         qrcodegen
+        esp_ringbuf
+        wolfssl
+        wolfssh
     EMBED_FILES
         "provisioning/index.html"
 )

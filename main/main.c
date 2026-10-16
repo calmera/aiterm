@@ -23,6 +23,7 @@
 #include "ui/ui.h"
 #include "ui/view_provision.h"
 #include "ui/view_settings.h"
+#include "ui/view_ssh.h"
 #include "ui/view_tui.h"
 
 static const char* TAG = "main";
@@ -78,7 +79,12 @@ static void start_provisioning_ui(void) {
     view_provision_show(provisioning_ap_ssid(), provisioning_ap_password(), url[0] ? url : NULL);
     update_status_line();
 }
-static void cb_mode_changed(void) { update_status_line(); tui_appendf(TUI_STYLE_SYSTEM, "mode: %s", app_config()->ui.default_mode == CFG_MODE_SSH ? "SSH" : "AI"); }
+static void cb_mode_changed(void) {
+    update_status_line();
+    bool ssh = app_config()->ui.default_mode == CFG_MODE_SSH;
+    tui_appendf(TUI_STYLE_SYSTEM, "mode: %s", ssh ? "SSH — Enter opens the terminal, Meta+Q leaves it" : "AI");
+    tui_set_prompt(ssh ? "ssh> " : "> ");
+}
 static void cb_theme_changed(void) { apply_ui_config(); }
 static void cb_font_changed(void) { apply_ui_config(); }
 static void cb_mcp_toggled(int index) { (void)index; mcp_refresh_async(); }
@@ -131,7 +137,7 @@ static void on_submit(const char* text, void* user) {
     (void)user;
     tui_appendf(TUI_STYLE_USER, "> %s", text);
     if (app_config()->ui.default_mode == CFG_MODE_SSH) {
-        tui_append_line(TUI_STYLE_MUTED, "(SSH mode is not available yet — Meta+M switches back to AI)");
+        view_ssh_open();
         return;
     }
     agent_submit(text);
@@ -197,6 +203,7 @@ static void ui_task(void* arg) {
     tui_set_submit_cb(on_submit, NULL);
     agent_init();
     apply_ui_config();
+    tui_set_prompt(app_config()->ui.default_mode == CFG_MODE_SSH ? "ssh> " : "> ");
     tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
     xTaskCreatePinnedToCore(net_boot_task, "netboot", 8192, NULL, 5, NULL, 1);
     ui_task_loop();
