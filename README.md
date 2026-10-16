@@ -18,6 +18,8 @@ Artifacts are in `out/`:
 | `out/flash.sh` | `esptool.py --chip esp32p4 -p ${PORT:-/dev/ttyACM0} -b 921600 write_flash 0x0 ai-terminal-merged.bin` |
 | `out/flasher_args.json` | the offsets the image was built from |
 
+Built image: 2,313,616 bytes (app 2.18 MB of the 6 MB factory partition; SSH on). SHA-256 in `WORKLOG.md`.
+
 ```sh
 pip install esptool            # any recent esptool (>= 4.8) knows the ESP32-P4
 PORT=/dev/ttyACM0 ./out/flash.sh

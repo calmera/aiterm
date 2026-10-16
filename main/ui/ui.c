@@ -325,6 +325,8 @@ lv_obj_t* ui_view_create_root(ui_view_t* v, const char* status_text) {
     lv_label_set_long_mode(status, LV_LABEL_LONG_CLIP);
     lv_label_set_text(status, status_text ? status_text : "");
     v->root = root;
+    // Make sizes valid immediately: views read lv_obj_get_height(content) while laying out.
+    lv_obj_update_layout(root);
     return content;
 }
 lv_obj_t* ui_view_content(ui_view_t* v) { return v && v->root ? lv_obj_get_child(v->root, 0) : NULL; }

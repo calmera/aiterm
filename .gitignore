@@ -8,3 +8,4 @@ host_tests/build/
 *.pyc
 __pycache__/
 .vscode/
+*.log
