@@ -1,5 +1,5 @@
 file(GLOB_RECURSE AITERM_SRCS
-    "*.c")
+    "*.c" "*.cpp")
 list(FILTER AITERM_SRCS EXCLUDE REGEX ".*/fonts/.*\\.c$")
 file(GLOB AITERM_FONT_SRCS "fonts/*.c")
 
@@ -35,6 +35,7 @@ idf_component_register(
         esp_ringbuf
         wolfssl
         wolfssh
+        espidf-nats
     EMBED_FILES
         "provisioning/index.html"
 )

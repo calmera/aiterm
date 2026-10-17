@@ -1,0 +1,15 @@
+version: 1.4.0
+description: ESP-IDF NATS client header-only library
+license: MIT
+dependencies:
+  idf: ">=4.4"
+  espressif/esp_websocket_client: ">=1.0.0"
+  # cJSON was a built-in IDF component (name: json) through v5.x; v6.0 moved
+  # it to the registry. Public so consumers who include nats_client.h get the
+  # cJSON header path transitively.
+  espressif/cjson:
+    version: ">=1.7.18"
+    public: true
+    rules:
+      - if: "idf_version >= 6.0.0"
+url: https://github.com/debsahu/espidf-nats

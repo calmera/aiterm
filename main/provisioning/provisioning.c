@@ -8,6 +8,8 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "net/chron_login.h"
+#include "net/chronicle.h"
 #include "net/wifi.h"
 #include "util/platform.h"
 
@@ -206,6 +208,45 @@ static esp_err_t h_mcp_test(httpd_req_t* req) {
     free(res);
     return r;
 }
+// ---- chronicle rooms: GitHub device flow + account choice ----
+static esp_err_t h_chron_login_start(httpd_req_t* req) {
+    bool refresh = false;
+    if (req->content_len > 0) {
+        char* body = read_body(req);
+        if (body) { cJSON* o = cJSON_Parse(body); cJSON* r = o ? cJSON_GetObjectItemCaseSensitive(o, "refresh_profile") : NULL; refresh = cJSON_IsTrue(r); cJSON* site = o ? cJSON_GetObjectItemCaseSensitive(o, "site") : NULL;
+            if (cJSON_IsString(site) && site->valuestring[0]) { strlcpy(app_config()->chronicle.site, site->valuestring, sizeof(app_config()->chronicle.site)); refresh = true; }
+            cJSON_Delete(o); plat_free(body); }
+    }
+    char err[160];
+    if (chron_login_start(refresh, err, sizeof(err)) != ESP_OK) return send_err(req, err);
+    char* s = chron_login_status_json();
+    esp_err_t r = send_json(req, s);
+    free(s);
+    return r;
+}
+static esp_err_t h_chron_login_status(httpd_req_t* req) { char* s = chron_login_status_json(); esp_err_t r = send_json(req, s); free(s); return r; }
+static esp_err_t h_chron_login_cancel(httpd_req_t* req) { chron_login_cancel(); return send_ok(req); }
+static esp_err_t h_chron_logout(httpd_req_t* req) { chron_login_logout(); return send_ok(req); }
+static esp_err_t h_chron_account(httpd_req_t* req) {
+    char* body = read_body(req);
+    if (!body) return send_err(req, "bad body");
+    cJSON* o = cJSON_Parse(body);
+    plat_free(body);
+    if (!o) return send_err(req, "invalid JSON");
+    cJSON* a = cJSON_GetObjectItemCaseSensitive(o, "account");
+    cJSON* st = cJSON_GetObjectItemCaseSensitive(o, "store");
+    chron_login_set_account(cJSON_IsString(a) ? a->valuestring : NULL, cJSON_IsString(st) ? st->valuestring : NULL);
+    cJSON_Delete(o);
+    return send_ok(req);
+}
+static esp_err_t h_chron_test(httpd_req_t* req) {
+    char* s = chronicle_test_account_json();
+    esp_err_t r = send_json(req, s ? s : "{\"ok\":false,\"error\":\"internal\"}");
+    free(s);
+    if (app_config()->ui.default_mode == CFG_MODE_ROOMS) chronicle_connect_async();  // the test used the one connection
+    return r;
+}
+
 static void reboot_task(void* arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(600)); esp_restart(); }
 static esp_err_t h_reboot(httpd_req_t* req) {
     send_ok(req);
@@ -221,7 +262,7 @@ static esp_err_t h_reset(httpd_req_t* req) {
 esp_err_t provisioning_http_start(void) {
     if (s_httpd) return ESP_OK;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 24;
     cfg.stack_size = 12288;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
@@ -239,6 +280,12 @@ esp_err_t provisioning_http_start(void) {
         {.uri = "/api/wifi/status", .method = HTTP_GET, .handler = h_wifi_status},
         {.uri = "/api/inference/test", .method = HTTP_POST, .handler = h_inference_test},
         {.uri = "/api/mcp/test", .method = HTTP_POST, .handler = h_mcp_test},
+        {.uri = "/api/chronicle/login/start", .method = HTTP_POST, .handler = h_chron_login_start},
+        {.uri = "/api/chronicle/login/status", .method = HTTP_GET, .handler = h_chron_login_status},
+        {.uri = "/api/chronicle/login/cancel", .method = HTTP_POST, .handler = h_chron_login_cancel},
+        {.uri = "/api/chronicle/logout", .method = HTTP_POST, .handler = h_chron_logout},
+        {.uri = "/api/chronicle/account", .method = HTTP_POST, .handler = h_chron_account},
+        {.uri = "/api/chronicle/test", .method = HTTP_POST, .handler = h_chron_test},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
         {.uri = "/api/reset", .method = HTTP_POST, .handler = h_reset},
         {.uri = "/*", .method = HTTP_GET, .handler = h_any},  // captive portal probes

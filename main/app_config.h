@@ -14,9 +14,11 @@ extern "C" {
 #define CFG_URL          256
 #define CFG_SECRET       512
 #define CFG_PROMPT       2048
+#define CFG_SENTINEL     2048
+#define CFG_TOKEN        160
 
 typedef enum { CFG_PROVIDER_OPENAI = 0, CFG_PROVIDER_ANTHROPIC = 1 } cfg_provider_t;
-typedef enum { CFG_MODE_AI = 0, CFG_MODE_SSH = 1 } cfg_mode_t;
+typedef enum { CFG_MODE_AI = 0, CFG_MODE_SSH = 1, CFG_MODE_ROOMS = 2 } cfg_mode_t;
 
 typedef struct {
     char ssid[33];
@@ -50,6 +52,21 @@ typedef struct {
     char     password[CFG_SECRET];
 } cfg_ssh_host_t;
 
+// chronicle-agents rooms over the hosted chronicle (GitHub sign-in through the identity bridge).
+typedef struct {
+    bool    enabled;                       // rooms mode offered (set once a sign-in completed)
+    char    site[CFG_URL];                 // https://chronicle.impire.dev (install profile at /.well-known/chronicle/profile.json)
+    char    nats_url[CFG_URL];             // tls://connect.chronicle.impire.dev:4222 (from the profile)
+    char    github_client_id[64];          // the install's GitHub App (from the profile)
+    char    sentinel[CFG_SENTINEL];        // the bridge's sentinel credential (from the profile; public)
+    char    access_token[CFG_TOKEN];       // GitHub user token (secret)
+    char    refresh_token[CFG_TOKEN];      // GitHub refresh token (secret)
+    int64_t token_expiry;                  // unix seconds the access token lapses, 0 = unknown
+    char    login[CFG_STR];                // GitHub login of the signed-in person
+    char    account[CFG_STR];              // chronicle account the badge lands in
+    char    store[CFG_STR];                // rooms store, default "rooms"
+} cfg_chronicle_t;
+
 typedef struct {
     bool       dark;        // theme
     uint8_t    font_size;   // 0 small, 1 medium, 2 large
@@ -66,6 +83,7 @@ typedef struct {
     int              mcp_count;
     cfg_ssh_host_t   ssh[CFG_MAX_SSH];
     int              ssh_count;
+    cfg_chronicle_t  chronicle;
     cfg_ui_t         ui;
 } app_config_t;
 
@@ -86,6 +104,8 @@ esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_ma
 
 bool      app_config_has_wifi(void);
 bool      app_config_has_inference(void);
+bool      app_config_has_chronicle(void);   // signed in: tokens, account and sentinel present
+const char* app_config_mode_name(cfg_mode_t m);  // "ai" / "ssh" / "rooms"
 void      app_config_mask_secret(const char* secret, char* out, int out_len);
 
 #ifdef __cplusplus

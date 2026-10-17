@@ -21,6 +21,7 @@
 #include "net/wifi.h"
 #include "nvs_flash.h"
 #include "provisioning/provisioning.h"
+#include "rooms/rooms_mode.h"
 #include "sdkconfig.h"
 #include "ui/ui.h"
 #include "ui/view_provision.h"
@@ -36,6 +37,15 @@ static bool        s_first_boot = false;
 const char* aiterm_version(void) { return CONFIG_AITERM_FW_VERSION; }
 static void mcp_refresh_async(void);
 static void update_status_line(void);
+void update_status_line_public(void) { update_status_line(); }
+
+// AI -> SSH -> Rooms (only once signed in) -> AI
+cfg_mode_t app_next_mode(cfg_mode_t m) {
+    if (m == CFG_MODE_AI) return CFG_MODE_SSH;
+    if (m == CFG_MODE_SSH) return app_config_has_chronicle() ? CFG_MODE_ROOMS : CFG_MODE_AI;
+    return CFG_MODE_AI;
+}
+static const char* prompt_for_mode(cfg_mode_t m) { return m == CFG_MODE_SSH ? "ssh> " : m == CFG_MODE_ROOMS ? "rooms> " : "> "; }
 
 // ---------------------------------------------------------------------------------------
 // Status line
@@ -71,12 +81,17 @@ static void update_status_line(void) {
     tui_set_sysbar(&sb);
     // ---- status line
     tui_status_t st = {.gauge_pct = -1, .tools = -1};
-    char model[80], amount[32] = "";
+    char model[80], amount[48] = "", extra[24] = "";
+    if (c->ui.default_mode == CFG_MODE_ROOMS) {
+        rooms_mode_status(&st, model, sizeof(model), amount, sizeof(amount), extra, sizeof(extra));
+        tui_set_status_info(&st);
+        return;
+    }
     if (c->ui.default_mode == CFG_MODE_SSH) {
         int i = c->ui.ssh_host >= 0 ? c->ui.ssh_host : 0;
         if (c->ssh_count) snprintf(model, sizeof(model), "%s@%s", c->ssh[i].user, c->ssh[i].host);
         else snprintf(model, sizeof(model), "no host configured");
-        st.mode = "SSH"; st.ssh = true;
+        st.mode = "SSH"; st.mode_kind = 1;
     } else {
         agent_stats_t as; agent_stats_get(&as);
         int win = c->inference.context_window > 0 ? c->inference.context_window : 128000;
@@ -118,11 +133,15 @@ static void start_provisioning_ui(void) {
     view_provision_show(provisioning_ap_ssid(), provisioning_ap_password(), url[0] ? url : NULL);
     update_status_line();
 }
+static cfg_mode_t s_shown_mode = CFG_MODE_AI;
 static void cb_mode_changed(void) {
+    cfg_mode_t m = app_config()->ui.default_mode;
+    if (s_shown_mode == CFG_MODE_ROOMS && m != CFG_MODE_ROOMS) rooms_mode_leave();
+    s_shown_mode = m;
     update_status_line();
-    bool ssh = app_config()->ui.default_mode == CFG_MODE_SSH;
-    tui_appendf(TUI_STYLE_SYSTEM, "mode: %s", ssh ? "SSH — Enter opens the terminal, Meta+Q leaves it" : "AI");
-    tui_set_prompt(ssh ? "ssh> " : "> ");
+    if (m == CFG_MODE_ROOMS) { rooms_mode_enter(); return; }
+    tui_appendf(TUI_STYLE_SYSTEM, "mode: %s", m == CFG_MODE_SSH ? "SSH — Enter opens the terminal, Meta+Q leaves it" : "AI");
+    tui_set_prompt(prompt_for_mode(m));
 }
 static void cb_theme_changed(void) { apply_ui_config(); }
 static void cb_font_changed(void) { apply_ui_config(); }
@@ -162,7 +181,7 @@ static void mcp_refresh_async(void) {
     if (!wifi_sta_connected() || app_config()->mcp_count == 0) return;
     xTaskCreatePinnedToCore(mcp_refresh_task, "mcp", 12288, NULL, 4, NULL, 1);
 }
-static void config_changed_cb(void* arg) { (void)arg; apply_ui_config(); mcp_refresh_async(); }
+static void config_changed_cb(void* arg) { (void)arg; apply_ui_config(); mcp_refresh_async(); rooms_mode_on_network_up(); }
 void app_config_changed(void) { ui_post(config_changed_cb, NULL); }
 
 // Hooks used by the provisioning API (replaced with real implementations in later phases).
@@ -174,6 +193,7 @@ char* app_test_mcp(const char* url, const char* auth_header, const char* auth_va
 // ---------------------------------------------------------------------------------------
 static void on_submit(const char* text, void* user) {
     (void)user;
+    if (app_config()->ui.default_mode == CFG_MODE_ROOMS) { rooms_mode_submit(text); return; }
     tui_appendf(TUI_STYLE_USER, "> %s", text);
     if (app_config()->ui.default_mode == CFG_MODE_SSH) {
         view_ssh_open();
@@ -184,6 +204,7 @@ static void on_submit(const char* text, void* user) {
 
 static bool global_keys(const ui_key_t* k) {
     bool meta = (k->mods & UI_MOD_META) != 0;
+    if (app_config()->ui.default_mode == CFG_MODE_ROOMS && ui_top() == ui_root() && rooms_mode_key(k)) return true;
     if (k->is_nav) {
         if (k->nav == UI_NAV_ESC && ui_stack_depth() > 1) { ui_pop(); update_status_line(); return true; }
         if (k->nav == UI_NAV_ESC && agent_busy()) { agent_abort(); return true; }
@@ -193,7 +214,8 @@ static bool global_keys(const ui_key_t* k) {
     if (meta && (k->ascii == ',' || k->ascii == 'm' || k->ascii == 'M' || k->ascii == 'n' || k->ascii == 'N')) {
         while (ui_stack_depth() > 1) ui_pop();
         if (k->ascii == ',') view_settings_show(&s_settings_cb);
-        else if (k->ascii == 'm' || k->ascii == 'M') { app_config()->ui.default_mode = app_config()->ui.default_mode == CFG_MODE_SSH ? CFG_MODE_AI : CFG_MODE_SSH; app_config_save(); cb_mode_changed(); }
+        else if (k->ascii == 'm' || k->ascii == 'M') { app_config()->ui.default_mode = app_next_mode(app_config()->ui.default_mode); app_config_save(); cb_mode_changed(); }
+        else if (app_config()->ui.default_mode == CFG_MODE_ROOMS) { rooms_mode_picker(); }
         else { agent_new_session(); tui_clear(); tui_append_line(TUI_STYLE_SYSTEM, "new session"); }
         return true;
     }
@@ -223,9 +245,12 @@ static void net_boot_task(void* arg) {
         wifi_sta_connect(c->wifi.ssid, c->wifi.password);
         if (!wifi_sta_wait(20000)) {
             ESP_LOGW(TAG, "wifi connect failed: %s", wifi_sta_last_error());
-        } else if (c->mcp_count > 0) {
-            mcp_client_refresh_all();
-            ui_post(mcp_done_cb, NULL);
+        } else {
+            rooms_mode_on_network_up();
+            if (c->mcp_count > 0) {
+                mcp_client_refresh_all();
+                ui_post(mcp_done_cb, NULL);
+            }
         }
     } else {
         s_first_boot = true;
@@ -242,9 +267,13 @@ static void ui_task(void* arg) {
     tui_set_submit_cb(on_submit, NULL);
     agent_init();
     agent_set_stats_cb(ui_status_cb, NULL);  // refresh the context gauge / cost after every request
+    rooms_mode_init();
+    if (app_config()->ui.default_mode == CFG_MODE_ROOMS && !app_config_has_chronicle()) app_config()->ui.default_mode = CFG_MODE_AI;
+    s_shown_mode = app_config()->ui.default_mode;
     apply_ui_config();
-    tui_set_prompt(app_config()->ui.default_mode == CFG_MODE_SSH ? "ssh> " : "> ");
+    tui_set_prompt(prompt_for_mode(app_config()->ui.default_mode));
     tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
+    if (app_config()->ui.default_mode == CFG_MODE_ROOMS) rooms_mode_enter();
     xTaskCreatePinnedToCore(net_boot_task, "netboot", 8192, NULL, 5, NULL, 1);
     ui_task_loop();
 }

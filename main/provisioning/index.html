@@ -55,19 +55,39 @@ small{color:var(--mu)}
 <div id="ssh_list"></div>
 <button onclick="addSsh()">Add host</button>
 
-<h2>5. Device</h2>
+<h2>5. Chronicle rooms</h2>
+<small>Rooms where people and agents post as peers, kept on the hosted chronicle. Sign in with the GitHub account that holds your chronicle account; the badge keeps a refresh token, nothing else.</small>
+<label>Chronicle site</label><input id="ch_site" placeholder="https://chronicle.impire.dev">
+<div id="ch_signed" class="msg"></div>
+<div id="ch_flow" style="display:none" class="item">
+  <div>Open <a id="ch_link" href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> on this phone and enter the code</div>
+  <div id="ch_code" style="font-size:28px;letter-spacing:3px;margin:8px 0;font-weight:bold"></div>
+  <div id="ch_flow_msg" class="msg">waiting for approval…</div>
+  <button onclick="chCancel()">Cancel</button>
+</div>
+<button id="ch_login" onclick="chLogin()">Sign in with GitHub</button>
+<button id="ch_logout" onclick="chLogout()" style="display:none">Sign out</button>
+<div id="ch_accounts" style="display:none">
+  <label>Account</label><select id="ch_account"></select>
+  <label>Rooms store <small>(the workspace's store, "rooms" unless you named it otherwise)</small></label><input id="ch_store">
+  <button onclick="chSaveAccount()">Use this account</button>
+  <button onclick="chTest()">Test</button>
+</div>
+<div id="ch_msg" class="msg"></div>
+
+<h2>6. Device</h2>
 <label>Theme</label><select id="ui_theme"><option value="dark">dark</option><option value="light">light</option></select>
 <label>Font size</label><select id="ui_font"><option value="small">small</option><option value="medium">medium</option><option value="large">large</option></select>
-<label>Default mode</label><select id="ui_mode"><option value="ai">AI</option><option value="ssh">SSH</option></select>
+<label>Default mode</label><select id="ui_mode"><option value="ai">AI</option><option value="ssh">SSH</option><option value="rooms">Rooms (chronicle)</option></select>
 <label>Timezone <small>(POSIX TZ for the clock: CET-1CEST,M3.5.0,M10.5.0/3 · GMT0BST,M3.5.0/1,M10.5.0 · EST5EDT,M3.2.0,M11.1.0 · UTC0)</small></label><input id="ui_tz">
 
-<h2>6. Import / Export</h2>
+<h2>7. Import / Export</h2>
 <small>The JSON below is the full configuration (secrets masked). Paste a configuration and press Import to load it into the form.</small>
 <textarea id="json"></textarea>
 <button onclick="exportJson()">Export from form</button>
 <button onclick="importJson()">Import into form</button>
 
-<h2>7. Save</h2>
+<h2>8. Save</h2>
 <button class="primary" onclick="save(false)">Save</button>
 <button onclick="save(true)">Save &amp; reboot</button>
 <button onclick="factoryReset()" style="float:right;border-color:var(--err);color:var(--err)">Factory reset</button>
@@ -75,7 +95,7 @@ small{color:var(--mu)}
 
 <script>
 const $=id=>document.getElementById(id);
-let cfg={version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],ui:{}};
+let cfg={version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],chronicle:{},ui:{}};
 const MASK='••••';
 function api(path,body){return fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{}).then(r=>r.json());}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
@@ -83,6 +103,8 @@ function fill(){
   $('wifi_ssid').value=cfg.wifi.ssid||'';$('wifi_pass').value=cfg.wifi.password||'';
   $('inf_provider').value=cfg.inference.provider||'openai';$('inf_url').value=cfg.inference.base_url||'';
   $('inf_key').value=cfg.inference.api_key||'';$('inf_model').value=cfg.inference.model||'';$('inf_prompt').value=cfg.inference.system_prompt||'';$('inf_ctx').value=cfg.inference.context_window||128000;$('inf_price_in').value=cfg.inference.price_in||0;$('inf_price_out').value=cfg.inference.price_out||0;
+  $('ch_site').value=(cfg.chronicle&&cfg.chronicle.site)||'https://chronicle.impire.dev';
+  chStatus();
   $('ui_theme').value=cfg.ui.theme||'dark';$('ui_font').value=cfg.ui.font_size||'medium';$('ui_mode').value=cfg.ui.default_mode||'ai';$('ui_tz').value=cfg.ui.timezone||'CET-1CEST,M3.5.0,M10.5.0/3';
   renderMcp();renderSsh();
 }
@@ -111,6 +133,7 @@ function collect(){
   cfg.wifi={ssid:$('wifi_ssid').value,password:$('wifi_pass').value};
   cfg.inference={provider:$('inf_provider').value,base_url:$('inf_url').value.trim(),api_key:$('inf_key').value,model:$('inf_model').value.trim(),system_prompt:$('inf_prompt').value,context_window:parseInt($('inf_ctx').value)||0,price_in:parseFloat($('inf_price_in').value)||0,price_out:parseFloat($('inf_price_out').value)||0};
   cfg.ui={theme:$('ui_theme').value,font_size:$('ui_font').value,default_mode:$('ui_mode').value,timezone:$('ui_tz').value.trim()};
+  cfg.chronicle={site:$('ch_site').value.trim()||'https://chronicle.impire.dev'};  // tokens, account and store are set through /api/chronicle/*
   return cfg;
 }
 function msg(id,text,cls){const e=$(id);e.textContent=text;e.className='msg '+(cls||'');}
@@ -149,8 +172,41 @@ async function testMcp(i){
     msg('mcp_msg'+i,r.ok?'OK — tools: '+(r.tools||[]).join(', '):'error: '+r.error,r.ok?'ok':'err');}
   catch(e){msg('mcp_msg'+i,'request failed','err');}
 }
+// ---- chronicle rooms
+let chTimer=null;
+function chRender(s){
+  const signed=s.signed_in;
+  $('ch_signed').textContent=signed?('signed in as '+s.login+(s.account?' · account '+s.account:' · no account chosen')+(s.nats_url?' · '+s.nats_url:'')+' · badge: '+s.connection):(s.state==='pending'?'':'not signed in');
+  $('ch_signed').className='msg '+(signed?'ok':'');
+  $('ch_login').textContent=signed?'Sign in again':'Sign in with GitHub';
+  $('ch_logout').style.display=signed?'':'none';
+  $('ch_flow').style.display=s.state==='pending'?'':'none';
+  if(s.state==='pending'){$('ch_code').textContent=s.user_code;$('ch_link').href=s.verification_uri;$('ch_link').textContent=s.verification_uri.replace(/^https?:\/\//,'');$('ch_flow_msg').textContent='waiting for approval… ('+Math.round(s.expires_in/60)+' min left)';}
+  if(s.state==='error'){msg('ch_msg','sign-in failed: '+s.error,'err');}
+  const accs=s.accounts||[];
+  const show=signed&&(accs.length>0||s.account);
+  $('ch_accounts').style.display=show?'':'none';
+  if(show){const sel=$('ch_account');const cur=sel.value||s.account;sel.innerHTML=accs.map(a=>`<option value="${esc(a.account)}">${esc(a.account)} (${esc(a.role)})</option>`).join('');
+    if(s.account&&!accs.some(a=>a.account===s.account))sel.innerHTML+=`<option value="${esc(s.account)}">${esc(s.account)}</option>`;
+    sel.value=cur||s.account;$('ch_store').value=$('ch_store').value||s.store||'rooms';}
+  clearTimeout(chTimer);
+  if(s.state==='pending')chTimer=setTimeout(chStatus,3000);
+}
+async function chStatus(){try{chRender(await api('/api/chronicle/login/status'));}catch(e){}}
+async function chLogin(){
+  msg('ch_msg','asking GitHub for a code…');
+  try{const r=await api('/api/chronicle/login/start',{site:$('ch_site').value.trim(),refresh_profile:true});
+    if(!r.ok){msg('ch_msg','error: '+r.error,'err');return;}
+    msg('ch_msg','');chRender(r);}
+  catch(e){msg('ch_msg','request failed','err');}
+}
+async function chCancel(){await api('/api/chronicle/login/cancel',{});chStatus();}
+async function chLogout(){if(!confirm('Forget the GitHub sign-in on the badge?'))return;await api('/api/chronicle/logout',{});msg('ch_msg','signed out');chStatus();}
+async function chSaveAccount(){const r=await api('/api/chronicle/account',{account:$('ch_account').value,store:$('ch_store').value.trim()||'rooms'});msg('ch_msg',r.ok?'saved':'error: '+r.error,r.ok?'ok':'err');chStatus();}
+async function chTest(){msg('ch_msg','connecting to chronicle… (up to 30 s)');try{const r=await api('/api/chronicle/test',{});
+  msg('ch_msg',r.ok?('OK — connected as '+r.principal+' in account '+r.account+(r.ops!==undefined?' · '+r.ops+' operations in the rooms store':r.store?' · '+r.store:'')):'error: '+r.error,r.ok?'ok':'err');}catch(e){msg('ch_msg','request failed','err');}}
 function exportJson(){collect();$('json').value=JSON.stringify(cfg,null,1);}
-function importJson(){try{const o=JSON.parse($('json').value);cfg=Object.assign({version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],ui:{}},o);fill();msg('save_msg','imported into the form — press Save to store it');}catch(e){msg('save_msg','invalid JSON: '+e,'err');}}
+function importJson(){try{const o=JSON.parse($('json').value);cfg=Object.assign({version:1,wifi:{},inference:{},mcp_servers:[],ssh_hosts:[],chronicle:{},ui:{}},o);fill();msg('save_msg','imported into the form — press Save to store it');}catch(e){msg('save_msg','invalid JSON: '+e,'err');}}
 async function save(reboot){
   collect();msg('save_msg','saving…');
   try{const r=await api('/api/config',cfg);

@@ -24,13 +24,14 @@ void tui_create(ui_view_t* v);  // builds the view and registers it as the UI ro
 
 // Bottom status line, vim-style coloured segments: [ MODE ][ model ][ gauge ][ amount ][ tools ]
 typedef struct {
-    const char* mode;       // "AI" / "SSH"
-    bool        ssh;        // picks the mode colour
-    const char* model;      // model name, or user@host in SSH mode
+    const char* mode;       // "AI" / "SSH" / "ROOMS"
+    int         mode_kind;  // 0 AI (blue), 1 SSH (purple), 2 rooms (teal): picks the block colour
+    const char* model;      // model name, user@host in SSH mode, account/#room in rooms mode
     int         gauge_pct;  // context window used, 0..100; <0 hides the gauge
     bool        gauge_est;  // usage was estimated (shown as "~42%")
-    const char* amount;     // "$0.0123" or "3.5k tok"; empty/NULL hides it
+    const char* amount;     // "$0.0123", "3.5k tok" or a live line; empty/NULL hides it
     int         tools;      // tool count; <0 hides it
+    const char* extra;      // muted trailing segment ("2 online"); empty/NULL hides it
 } tui_status_t;
 void tui_set_status_info(const tui_status_t* s);
 

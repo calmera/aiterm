@@ -52,7 +52,7 @@ static lv_obj_t*   s_status_bg = NULL;
 #define STATUS_SEGS 5
 static lv_obj_t*   s_seg[STATUS_SEGS];
 static lv_timer_t* s_clock_timer = NULL;
-static struct { char mode[8]; bool ssh; char model[64]; int gauge_pct; bool gauge_est; char amount[24]; int tools; } s_st = {.mode = "AI", .gauge_pct = -1, .tools = -1};
+static struct { char mode[8]; int mode_kind; char model[64]; int gauge_pct; bool gauge_est; char amount[48]; int tools; char extra[24]; } s_st = {.mode = "AI", .gauge_pct = -1, .tools = -1};
 static struct { bool wifi_connected; int rssi; char ssid[33]; char net_text[48]; int battery_pct; bool charging; } s_sys = {.battery_pct = -1};
 static tui_submit_cb_t s_submit = NULL;
 static void*       s_submit_user = NULL;
@@ -200,7 +200,7 @@ static void render_status(void) {
     const ui_theme_t* t = ui_theme();
     int cols = tui_cols();
     for (int i = 0; i < STATUS_SEGS; i++) lv_obj_add_flag(s_seg[i], LV_OBJ_FLAG_HIDDEN);
-    char mode[12], gauge[48] = "", amount[32] = "", tools[20] = "";
+    char mode[12], gauge[48] = "", amount[56] = "", tools[32] = "";
     snprintf(mode, sizeof(mode), " %s ", s_st.mode[0] ? s_st.mode : "AI");
     int pct = s_st.gauge_pct;
     if (pct >= 0) {
@@ -212,6 +212,7 @@ static void render_status(void) {
     }
     if (s_st.amount[0]) snprintf(amount, sizeof(amount), " %s ", s_st.amount);
     if (s_st.tools >= 0) snprintf(tools, sizeof(tools), " %d tools ", s_st.tools);
+    else if (s_st.extra[0]) snprintf(tools, sizeof(tools), " %s ", s_st.extra);
     // the model segment takes what is left of the line
     int fixed = ui_utf8_len(mode) + ui_utf8_len(gauge) + ui_utf8_len(amount) + ui_utf8_len(tools);
     int avail = cols - fixed - 2;
@@ -224,7 +225,7 @@ static void render_status(void) {
         snprintf(model, sizeof(model), " %s ", s_st.model[0] ? s_st.model : "no model");
     }
     int x = 0;
-    seg_place(0, &x, mode, lv_color_hex(0xFFFFFF), s_st.ssh ? t->accent2 : t->accent, ui_font_bold());
+    seg_place(0, &x, mode, lv_color_hex(0xFFFFFF), s_st.mode_kind == 1 ? t->accent2 : s_st.mode_kind == 2 ? t->accent3 : t->accent, ui_font_bold());
     seg_place(1, &x, model, t->fg, t->seg_bg, ui_font());
     if (gauge[0]) seg_place(2, &x, gauge, pct >= 85 ? t->error : pct >= 60 ? t->warn : t->ok, t->bar_bg, ui_font());
     if (amount[0]) seg_place(3, &x, amount, t->fg, t->bar_bg, ui_font());
@@ -548,7 +549,8 @@ void tui_create(ui_view_t* v) {
 void tui_set_status_info(const tui_status_t* st) {
     if (!st) return;
     strlcpy(s_st.mode, st->mode ? st->mode : "AI", sizeof(s_st.mode));
-    s_st.ssh = st->ssh;
+    s_st.mode_kind = st->mode_kind;
+    strlcpy(s_st.extra, st->extra ? st->extra : "", sizeof(s_st.extra));
     strlcpy(s_st.model, st->model ? st->model : "", sizeof(s_st.model));
     s_st.gauge_pct = st->gauge_pct;
     s_st.gauge_est = st->gauge_est;

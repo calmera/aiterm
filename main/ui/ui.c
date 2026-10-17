@@ -66,6 +66,7 @@ static void theme_fill(bool dark) {
     s_theme.heading  = dark ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x000000);
     s_theme.accent   = lv_color_hex(0x1F6FEB);                                   // AI mode block
     s_theme.accent2  = lv_color_hex(0x8957E5);                                   // SSH mode block
+    s_theme.accent3  = lv_color_hex(0x0F766E);                                   // rooms mode block (chronicle teal)
     s_theme.seg_bg   = dark ? lv_color_hex(0x30363D) : lv_color_hex(0xD0D7DE);
     s_theme.bar_bg   = dark ? lv_color_hex(0x1C2128) : lv_color_hex(0xE6EBF0);
     s_theme.ok       = lv_color_hex(0x3FB950);

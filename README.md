@@ -3,10 +3,13 @@
 `ai-terminal` turns the WHY2025 badge (ESP32-P4 + ESP32-C6 radio, 720×720 display, QWERTY
 keyboard) into a chat/coding terminal for any OpenAI-compatible or Anthropic inference endpoint,
 with remote **MCP** tool servers, seven on-device **render tools** the model can call
-(markdown, code, diff, table, choice, image, chart), and a plain **SSH** terminal mode.
+(markdown, code, diff, table, choice, image, chart), a plain **SSH** terminal mode, and a
+**Rooms** mode: a [chronicle-agents](https://github.com/impire-io/chronicle-agents) client where
+people and agents post as peers in rooms kept on the hosted [chronicle](https://chronicle.impire.dev).
 
 Everything heavy runs on the backend; the badge renders, takes input and holds the connections.
-No vendor protocol in the firmware — only the OpenAI/Anthropic HTTP APIs and MCP Streamable HTTP.
+No vendor protocol in the firmware — the OpenAI/Anthropic HTTP APIs, MCP Streamable HTTP, SSH,
+and NATS (JetStream) for chronicle.
 
 ## Flashing
 
@@ -67,7 +70,10 @@ touched by this image.
    shows the IP once connected; the same page is then also reachable at `http://<ip>/`.
 4. Fill in **Inference** (provider, base URL, API key, model) → **Test**. Add **MCP servers**
    (→ **Connect** lists the discovered tools) and **SSH hosts**. **Save**.
-5. Back on the badge, type a message and press Enter.
+5. **Chronicle rooms** (optional): press **Sign in with GitHub**. The page shows an 8-character
+   code and a link to `github.com/login/device`; open it on the phone, enter the code, approve.
+   The badge then lists the chronicle accounts you hold — pick one, **Use this account**, **Test**.
+6. Back on the badge, type a message and press Enter. `Meta+M` cycles AI → SSH → Rooms.
 
 The whole configuration can be exported/imported as JSON on the page (secrets masked on export).
 
@@ -77,7 +83,7 @@ POSIX TZ string, default `CET-1CEST,M3.5.0,M10.5.0/3`), Wi-Fi signal bars with t
 badge has no fuel gauge or charger the P4 can read (the BSP's power functions are stubs for this
 target and BadgeVMS has no battery driver either), so the battery slot stays hidden there.
 
-**Status line (bottom).** Vim-style segments: ` AI ` (blue; ` SSH ` purple) · model · context
+**Status line (bottom).** Vim-style segments: ` AI ` (blue; ` SSH ` purple; ` ROOMS ` teal) · model · context
 gauge `████░░░░ 42%` coloured green/yellow/red by usage of the model's **context window**
 (*Inference → Context window*, default 128000 tokens; `~` = estimated because the server did not
 report usage) · session cost from the **price per 1M tokens** fields, or the token total when no
@@ -90,6 +96,41 @@ prices are set · tool count. `Meta+N` starts a new session and resets the count
 * Anthropic: `https://api.anthropic.com/v1`, model e.g. `claude-sonnet-4-5`
 * Scaleway Generative APIs: `https://api.scaleway.ai/<project-id>/v1`, model e.g. `llama-3.3-70b-instruct` (verified)
 
+## Rooms mode (chronicle-agents)
+
+A room is created for a purpose; people and agents post in it as peers. Mention an agent with
+`@wilson …` and its reply lands in the room a few seconds later. Every message is an operation in
+a chronicle store, with its author; the badge shows exactly what the record holds.
+
+**Sign-in.** The badge speaks to the hosted chronicle through its identity bridge, so it signs in
+as *you* with GitHub's device flow (no client secret on the device, no callback URL): the setup
+page requests a code from GitHub, you approve it at `github.com/login/device` on the phone, and
+the badge keeps the access token and the refresh token in its NVS configuration (masked on
+export). The access token lives eight hours; the badge refreshes it at GitHub with the install's
+client id alone, the way the `chronicle` CLI does. The install profile
+(`/.well-known/chronicle/profile.json`: NATS URL, GitHub App id, the bridge's public sentinel
+credential) is fetched at each sign-in and cached in the configuration.
+
+**On the wire.** One TLS NATS connection to `connect.chronicle.impire.dev:4222` (IDF certificate
+bundle), authenticated with the sentinel JWT, its NKey signature (ed25519 through the vendored
+wolfCrypt) and the connect token `<account>:<github token>`. Reading is one JetStream pull
+consumer over the rooms store's stream (`LOG_ROOMS`, filter `CHRON.rooms.OPS.>`), acknowledged
+explicitly and folded on the badge into rooms, messages (with `Op-Author`) and agent
+announcements — the same fold the hosted rooms page does. Writing is a verified write through
+the chronicle node (`CHRON.API.<you>.APPLY.rooms.<path>`): one request, one reply. Live signals
+(`CHRON.LIVE.rooms.room.<id>`, `…agent.<name>`) show *wilson is thinking…* in the status line and
+who is online; a refusal prints in red with its reason. After a reconnect the consumer resumes
+from the last sequence seen.
+
+**On the badge.** Enter posts to the open room; `@name` fills the `mentions` the agent's trigger
+matches (Tab completes names); a direct conversation with an agent needs no mention. `Meta+L`
+(or `/rooms`) opens the picker: agents (● online), open rooms, closed rooms, *new room*.
+Commands: `/dm <agent>` conversation, `/new <title>` room, `/agents`, `/close`, `/reconnect`,
+`/help`. The badge keeps the last 400 messages per room in PSRAM and up to 32 rooms.
+
+Not in this version: questions with choices are shown as text (answer with a plain message),
+agent steps and cost are not rendered, no room search, no unread counts.
+
 ## Keys
 
 | key | action |
@@ -97,8 +138,9 @@ prices are set · tool count. `Meta+N` starts a new session and resets the count
 | `Enter` | send message (AI) / open the SSH terminal (SSH mode) |
 | `Esc` | close the current full-screen view; in the chat: cancel the running request |
 | `F1` or `Meta+,` | Settings |
-| `Meta+M` | toggle AI / SSH mode |
-| `Meta+N` | new AI session (clears the conversation) |
+| `Meta+M` | cycle AI / SSH / Rooms mode (Rooms only once signed in) |
+| `Meta+N` | new AI session (clears the conversation); in Rooms: the room picker |
+| `Meta+L` (Rooms) | pick a room or an agent · `Tab` completes an `@name` |
 | `PgUp/PgDn` (`Fn+↑/↓`), `Shift+↑/↓` | scroll the chat |
 | `↑/↓` (empty input) | input history |
 | `Home/End` (`Fn+←/→`), `Ctrl+U/A/E/K/W` | line editing |
@@ -118,6 +160,7 @@ prices are set · tool count. `Meta+N` starts a new session and resets the count
 | 2 AI mode: streaming SSE, OpenAI + Anthropic, agent loop, abort, history budget | done |
 | 3 Render tools: markdown, choice, code, table, diff, image, chart | done |
 | 4 MCP Streamable HTTP client, tool merge, Connect test, per-server toggle | done |
+| 8 Rooms mode: chronicle-agents over NATS, GitHub device-flow sign-in, live signals | done; on hardware: boot, device-code request, TLS + NKey + bridge refusal verified (2026-10-17); the signed-in room flow needs the owner's phone |
 | 5 Polish: status line, live theme/font, light theme, `[error] … — hint` lines, PSRAM watchdog, About | done |
 | 6 SSH mode (wolfSSH 1.4.20 + wolfCrypt 5.8.2, password auth, xterm PTY, VT100/ANSI screen) | done, behind `CONFIG_AITERM_SSH` (default **on**) |
 | 7 Voice | **not implemented** — `audio/voice.h` stubs + `CONFIG_AITERM_VOICE` (off). STT/TTS are meant as backend services (`/audio/transcriptions`, `/audio/speech`); the C6 is BLE-only (no A2DP headsets) |

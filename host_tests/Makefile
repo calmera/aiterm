@@ -9,7 +9,7 @@ UTIL_SRCS := $(MAIN)/util/jsonbuf.c $(MAIN)/util/sse.c
 HIST      := $(MAIN)/agent/history.c
 CJSON     := ../components/cjson/cJSON.c
 
-TESTS := test_sse test_openai test_anthropic test_mcp test_markdown test_diff test_vt test_history
+TESTS := test_sse test_openai test_anthropic test_mcp test_markdown test_diff test_vt test_history test_chron
 
 .PHONY: all run clean
 all: $(addprefix $(BUILD)/,$(TESTS))
@@ -44,6 +44,9 @@ $(BUILD)/test_vt: test_vt.c $(UTIL_SRCS) $(MAIN)/ui/vt_screen.c | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $^
 
 $(BUILD)/test_history: test_history.c $(UTIL_SRCS) $(HIST) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $^
+
+$(BUILD)/test_chron: test_chron.c $(UTIL_SRCS) $(MAIN)/net/chron_proto.c $(MAIN)/net/nkeys.c $(CJSON) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $^
 
 clean:

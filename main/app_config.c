@@ -24,7 +24,11 @@ void app_config_set_defaults(app_config_t* c) {
     c->ui.default_mode = CFG_MODE_AI;
     c->ui.ssh_host = -1;
     strlcpy(c->ui.timezone, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof(c->ui.timezone));
+    strlcpy(c->chronicle.site, "https://chronicle.impire.dev", sizeof(c->chronicle.site));
+    strlcpy(c->chronicle.store, "rooms", sizeof(c->chronicle.store));
 }
+const char* app_config_mode_name(cfg_mode_t m) { return m == CFG_MODE_SSH ? "ssh" : m == CFG_MODE_ROOMS ? "rooms" : "ai"; }
+static cfg_mode_t mode_from_name(const char* s) { return strcmp(s, "ssh") == 0 ? CFG_MODE_SSH : strcmp(s, "rooms") == 0 ? CFG_MODE_ROOMS : CFG_MODE_AI; }
 
 void app_config_mask_secret(const char* secret, char* out, int out_len) {
     size_t n = strlen(secret);
@@ -140,6 +144,25 @@ esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_ma
         }
         if (c->ui.ssh_host >= c->ssh_count) c->ui.ssh_host = c->ssh_count ? 0 : -1;
     }
+    if ((o = cJSON_GetObjectItemCaseSensitive(root, "chronicle")) && cJSON_IsObject(o)) {
+        cfg_chronicle_t* ch = &c->chronicle;
+        jget_bool(o, "enabled", &ch->enabled);
+        jget_str(o, "site", ch->site, sizeof(ch->site));
+        jget_str(o, "nats_url", ch->nats_url, sizeof(ch->nats_url));
+        jget_str(o, "github_client_id", ch->github_client_id, sizeof(ch->github_client_id));
+        jget_secret(o, "sentinel", ch->sentinel, sizeof(ch->sentinel), keep_masked);
+        jget_secret(o, "access_token", ch->access_token, sizeof(ch->access_token), keep_masked);
+        jget_secret(o, "refresh_token", ch->refresh_token, sizeof(ch->refresh_token), keep_masked);
+        cJSON* te = cJSON_GetObjectItemCaseSensitive(o, "token_expiry");
+        if (cJSON_IsNumber(te)) ch->token_expiry = (int64_t)te->valuedouble;
+        jget_str(o, "login", ch->login, sizeof(ch->login));
+        jget_str(o, "account", ch->account, sizeof(ch->account));
+        jget_str(o, "store", ch->store, sizeof(ch->store));
+        if (!ch->store[0]) strlcpy(ch->store, "rooms", sizeof(ch->store));
+        if (!ch->site[0]) strlcpy(ch->site, "https://chronicle.impire.dev", sizeof(ch->site));
+        size_t n = strlen(ch->site);
+        while (n > 0 && ch->site[n - 1] == '/') ch->site[--n] = 0;
+    }
     if ((o = cJSON_GetObjectItemCaseSensitive(root, "ui")) && cJSON_IsObject(o)) {
         char s[32] = "";
         jget_str(o, "theme", s, sizeof(s));
@@ -148,7 +171,7 @@ esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_ma
         if (s[0]) c->ui.font_size = strcmp(s, "small") == 0 ? 0 : strcmp(s, "large") == 0 ? 2 : 1;
         jget_str(o, "timezone", c->ui.timezone, sizeof(c->ui.timezone));
         s[0] = 0; jget_str(o, "default_mode", s, sizeof(s));
-        if (s[0]) c->ui.default_mode = strcmp(s, "ssh") == 0 ? CFG_MODE_SSH : CFG_MODE_AI;
+        if (s[0]) c->ui.default_mode = mode_from_name(s);
         int sh = c->ui.ssh_host; jget_int(o, "ssh_host", &sh);
         c->ui.ssh_host = (int8_t)(sh >= -1 && sh < c->ssh_count ? sh : (c->ssh_count ? 0 : -1));
     }
@@ -196,11 +219,29 @@ char* app_config_export_json(const app_config_t* c, bool mask) {
         else cJSON_AddStringToObject(e, "password", c->ssh[i].password);
         cJSON_AddItemToArray(arr, e);
     }
+    {
+        const cfg_chronicle_t* ch = &c->chronicle;
+        cJSON* o = cJSON_AddObjectToObject(root, "chronicle");
+        cJSON_AddBoolToObject(o, "enabled", ch->enabled);
+        cJSON_AddStringToObject(o, "site", ch->site);
+        cJSON_AddStringToObject(o, "nats_url", ch->nats_url);
+        cJSON_AddStringToObject(o, "github_client_id", ch->github_client_id);
+        if (mask) { app_config_mask_secret(ch->sentinel, m, sizeof(m)); cJSON_AddStringToObject(o, "sentinel", m); }
+        else cJSON_AddStringToObject(o, "sentinel", ch->sentinel);
+        if (mask) { app_config_mask_secret(ch->access_token, m, sizeof(m)); cJSON_AddStringToObject(o, "access_token", m); }
+        else cJSON_AddStringToObject(o, "access_token", ch->access_token);
+        if (mask) { app_config_mask_secret(ch->refresh_token, m, sizeof(m)); cJSON_AddStringToObject(o, "refresh_token", m); }
+        else cJSON_AddStringToObject(o, "refresh_token", ch->refresh_token);
+        cJSON_AddNumberToObject(o, "token_expiry", (double)ch->token_expiry);
+        cJSON_AddStringToObject(o, "login", ch->login);
+        cJSON_AddStringToObject(o, "account", ch->account);
+        cJSON_AddStringToObject(o, "store", ch->store);
+    }
     cJSON* ui = cJSON_AddObjectToObject(root, "ui");
     cJSON_AddStringToObject(ui, "timezone", c->ui.timezone);
     cJSON_AddStringToObject(ui, "theme", c->ui.dark ? "dark" : "light");
     cJSON_AddStringToObject(ui, "font_size", c->ui.font_size == 0 ? "small" : c->ui.font_size == 2 ? "large" : "medium");
-    cJSON_AddStringToObject(ui, "default_mode", c->ui.default_mode == CFG_MODE_SSH ? "ssh" : "ai");
+    cJSON_AddStringToObject(ui, "default_mode", app_config_mode_name(c->ui.default_mode));
     cJSON_AddNumberToObject(ui, "ssh_host", c->ui.ssh_host);
     char* out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -253,3 +294,7 @@ esp_err_t app_config_reset(void) {
 
 bool app_config_has_wifi(void) { return s_cfg.wifi.ssid[0] != 0; }
 bool app_config_has_inference(void) { return s_cfg.inference.base_url[0] && s_cfg.inference.model[0]; }
+bool app_config_has_chronicle(void) {
+    const cfg_chronicle_t* ch = &s_cfg.chronicle;
+    return ch->access_token[0] && ch->account[0] && ch->sentinel[0] && ch->nats_url[0] && ch->github_client_id[0];
+}

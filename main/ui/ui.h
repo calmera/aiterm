@@ -48,7 +48,7 @@ struct ui_view {
 // ---- theme / fonts --------------------------------------------------------------------
 typedef struct {
     lv_color_t bg, fg, muted, sel_bg, sel_fg, diff_add, diff_del, kw, str, comment, code_bg, user, error, heading;
-    lv_color_t accent, accent2, seg_bg, bar_bg, ok, warn;  // status / system bars
+    lv_color_t accent, accent2, accent3, seg_bg, bar_bg, ok, warn;  // status / system bars (AI / SSH / rooms blocks)
     bool       dark;
 } ui_theme_t;
 

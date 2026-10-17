@@ -7,8 +7,9 @@
 #include "sdkconfig.h"
 
 #define MAX_ITEMS 40
+cfg_mode_t app_next_mode(cfg_mode_t m);  // main.c: AI -> SSH -> Rooms (when signed in) -> AI
 
-typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_HEADER } item_kind_t;
+typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_ROOMS, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_HEADER } item_kind_t;
 typedef struct { item_kind_t kind; int index; } item_t;
 
 static ui_view_t s_view;
@@ -29,6 +30,7 @@ static void build_items(void) {
     s_items[s_n++] = (item_t){IT_HEADER, 0};  // "MCP servers"
     for (int i = 0; i < c->mcp_count && s_n < MAX_ITEMS - 10; i++) s_items[s_n++] = (item_t){IT_MCP, i};
     s_items[s_n++] = (item_t){IT_SSH_HOST, 0};
+    s_items[s_n++] = (item_t){IT_ROOMS, 0};
     s_items[s_n++] = (item_t){IT_THEME, 0};
     s_items[s_n++] = (item_t){IT_FONT, 0};
     s_items[s_n++] = (item_t){IT_SETUP, 0};
@@ -40,7 +42,11 @@ static void build_items(void) {
 static void item_text(const item_t* it, char* buf, size_t n) {
     app_config_t* c = app_config();
     switch (it->kind) {
-        case IT_MODE: snprintf(buf, n, "Mode                 %s", c->ui.default_mode == CFG_MODE_SSH ? "SSH" : "AI"); break;
+        case IT_MODE: snprintf(buf, n, "Mode                 %s", c->ui.default_mode == CFG_MODE_SSH ? "SSH" : c->ui.default_mode == CFG_MODE_ROOMS ? "Rooms" : "AI"); break;
+        case IT_ROOMS:
+            if (app_config_has_chronicle()) snprintf(buf, n, "Chronicle rooms      %s · account %s · store %s  (change on phone)", c->chronicle.login, c->chronicle.account, c->chronicle.store);
+            else snprintf(buf, n, "Chronicle rooms      (not signed in — sign in with GitHub on the phone page)");
+            break;
         case IT_INFERENCE: {
             char key[16]; app_config_mask_secret(c->inference.api_key, key, sizeof(key));
             snprintf(buf, n, "Inference            %s · %s · key %s  (change on phone)",
@@ -89,7 +95,7 @@ static void activate(void) {
     app_config_t* c = app_config();
     item_t* it = &s_items[s_sel];
     switch (it->kind) {
-        case IT_MODE: c->ui.default_mode = c->ui.default_mode == CFG_MODE_SSH ? CFG_MODE_AI : CFG_MODE_SSH; app_config_save(); if (s_cb.on_mode_changed) s_cb.on_mode_changed(); break;
+        case IT_MODE: c->ui.default_mode = app_next_mode(c->ui.default_mode); app_config_save(); if (s_cb.on_mode_changed) s_cb.on_mode_changed(); break;
         case IT_MCP: c->mcp[it->index].enabled = !c->mcp[it->index].enabled; app_config_save(); if (s_cb.on_mcp_toggled) s_cb.on_mcp_toggled(it->index); break;
         case IT_SSH_HOST: if (c->ssh_count) { c->ui.ssh_host = (int8_t)((c->ui.ssh_host + 1) % c->ssh_count); app_config_save(); if (s_cb.on_ssh_host_changed) s_cb.on_ssh_host_changed(); } break;
         case IT_THEME: c->ui.dark = !c->ui.dark; app_config_save(); if (s_cb.on_theme_changed) s_cb.on_theme_changed(); break;
