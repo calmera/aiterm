@@ -56,7 +56,7 @@ small{color:var(--mu)}
 <button onclick="addSsh()">Add host</button>
 
 <h2>5. Chronicle rooms</h2>
-<small>Rooms where people and agents post as peers, kept on the hosted chronicle. Sign in with the GitHub account that holds your chronicle account; the badge keeps a refresh token, nothing else.</small>
+<small>Rooms where people and agents post as peers, kept on the hosted chronicle. Sign in with the GitHub account that holds your chronicle account; the badge keeps a refresh token, nothing else. The badge talks to GitHub itself, so it must be on Wi-Fi first; your phone must have internet to approve (the badge's hotspot has none — the badge also shows a QR to scan from any network).</small>
 <label>Chronicle site</label><input id="ch_site" placeholder="https://chronicle.impire.dev">
 <div id="ch_signed" class="msg"></div>
 <div id="ch_flow" style="display:none" class="item">
@@ -181,7 +181,9 @@ function chRender(s){
   $('ch_login').textContent=signed?'Sign in again':'Sign in with GitHub';
   $('ch_logout').style.display=signed?'':'none';
   $('ch_flow').style.display=s.state==='pending'?'':'none';
-  if(s.state==='pending'){$('ch_code').textContent=s.user_code;$('ch_link').href=s.verification_uri;$('ch_link').textContent=s.verification_uri.replace(/^https?:\/\//,'');$('ch_flow_msg').textContent='waiting for approval… ('+Math.round(s.expires_in/60)+' min left)';}
+  if(s.state==='pending'){$('ch_code').textContent=s.user_code;$('ch_link').href=s.qr_url||s.verification_uri;$('ch_link').textContent=(s.verification_uri||'').replace(/^https?:\/\//,'');$('ch_flow_msg').textContent='waiting for approval… ('+Math.round(s.expires_in/60)+' min left) — or scan the QR on the badge';}
+  if(s.state==='starting'||s.state==='finishing'){msg('ch_msg',s.state==='starting'?'asking GitHub for a code…':'approved — asking chronicle for your accounts…');}
+  $('ch_login').disabled=!s.wifi;$('ch_login').title=s.wifi?'':'connect the badge to Wi-Fi first';
   if(s.state==='error'){msg('ch_msg','sign-in failed: '+s.error,'err');}
   const accs=s.accounts||[];
   const show=signed&&(accs.length>0||s.account);
@@ -190,7 +192,7 @@ function chRender(s){
     if(s.account&&!accs.some(a=>a.account===s.account))sel.innerHTML+=`<option value="${esc(s.account)}">${esc(s.account)}</option>`;
     sel.value=cur||s.account;$('ch_store').value=$('ch_store').value||s.store||'rooms';}
   clearTimeout(chTimer);
-  if(s.state==='pending')chTimer=setTimeout(chStatus,3000);
+  if(s.state==='pending'||s.state==='starting'||s.state==='finishing')chTimer=setTimeout(chStatus,s.state==='pending'?3000:1500);
 }
 async function chStatus(){try{chRender(await api('/api/chronicle/login/status'));}catch(e){}}
 async function chLogin(){

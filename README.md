@@ -70,9 +70,13 @@ touched by this image.
    shows the IP once connected; the same page is then also reachable at `http://<ip>/`.
 4. Fill in **Inference** (provider, base URL, API key, model) → **Test**. Add **MCP servers**
    (→ **Connect** lists the discovered tools) and **SSH hosts**. **Save**.
-5. **Chronicle rooms** (optional): press **Sign in with GitHub**. The page shows an 8-character
-   code and a link to `github.com/login/device`; open it on the phone, enter the code, approve.
-   The badge then lists the chronicle accounts you hold — pick one, **Use this account**, **Test**.
+5. **Chronicle rooms** (optional, once the badge is on Wi-Fi): on the badge, `F1` → **Sign in to
+   chronicle** (or `/signin` in Rooms mode). The badge shows a QR code and an 8-character code;
+   scan the QR with your phone on any network with internet (the badge's hotspot has none), GitHub
+   opens with the code pre-filled, press Continue and Authorize. The badge finishes the sign-in
+   and lands in your chronicle account. If you hold several accounts, or named the rooms store
+   differently, pick them on the setup page under *Chronicle rooms* (the page also has a sign-in
+   button for when the phone is on the home Wi-Fi).
 6. Back on the badge, type a message and press Enter. `Meta+M` cycles AI → SSH → Rooms.
 
 The whole configuration can be exported/imported as JSON on the page (secrets masked on export).
@@ -103,10 +107,14 @@ A room is created for a purpose; people and agents post in it as peers. Mention 
 a chronicle store, with its author; the badge shows exactly what the record holds.
 
 **Sign-in.** The badge speaks to the hosted chronicle through its identity bridge, so it signs in
-as *you* with GitHub's device flow (no client secret on the device, no callback URL): the setup
-page requests a code from GitHub, you approve it at `github.com/login/device` on the phone, and
-the badge keeps the access token and the refresh token in its NVS configuration (masked on
-export). The access token lives eight hours; the badge refreshes it at GitHub with the install's
+as *you* with GitHub's device flow (no client secret on the device, no callback URL): the badge
+requests a code from GitHub and shows it as a QR of `github.com/login/device?user_code=…` (GitHub
+pre-fills the code) plus the code in large type; you approve on the phone, from any network with
+internet; the badge polls GitHub and keeps the access token and the refresh token in its NVS
+configuration (masked on export). The flow lives on the badge because both ends need internet:
+the badge talks to GitHub and chronicle, the phone only approves — and on the badge's setup
+hotspot the captive DNS answers every name with the badge's own address, so nothing can be
+approved from there. The access token lives eight hours; the badge refreshes it at GitHub with the install's
 client id alone, the way the `chronicle` CLI does. The install profile
 (`/.well-known/chronicle/profile.json`: NATS URL, GitHub App id, the bridge's public sentinel
 credential) is fetched at each sign-in and cached in the configuration.

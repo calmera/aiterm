@@ -5,6 +5,7 @@
 #include "app_config.h"
 #include "net/chronicle.h"
 #include "ui/view_list.h"
+#include "ui/view_signin.h"
 #include "util/platform.h"
 
 static bool     s_active = false;
@@ -125,6 +126,11 @@ static void handle_event(void* arg) {
         case CHRON_EV_ROOM_OPENED: open_room(e->room); break;
         case CHRON_EV_ERROR: if (s_active) tui_appendf(TUI_STYLE_ERROR, "[error] %s", e->text); break;
         case CHRON_EV_INFO: tui_appendf(TUI_STYLE_SYSTEM, "%s", e->text); break;
+        case CHRON_EV_LOGIN:
+            // a flow started from the setup page shows its QR on the badge too
+            if (strcmp(e->text, "starting") == 0 && !view_signin_visible() && ui_top() == ui_root()) view_signin_show();
+            else view_signin_refresh();
+            break;
     }
     update_status_line_public();
     plat_free(e->text);
@@ -194,7 +200,7 @@ void rooms_mode_picker(void) {
 static void help(void) {
     tui_append_line(TUI_STYLE_SYSTEM, "rooms: type to post in the room (@name mentions an agent; Tab completes names)");
     tui_append_line(TUI_STYLE_SYSTEM, "  /rooms (Meta+L) pick a room or agent · /dm <agent> conversation · /new <title> room");
-    tui_append_line(TUI_STYLE_SYSTEM, "  /agents who exists · /close close this room · /reconnect · /help");
+    tui_append_line(TUI_STYLE_SYSTEM, "  /agents who exists · /close close this room · /reconnect · /signin · /help");
 }
 void rooms_mode_submit(const char* text) {
     while (*text == ' ') text++;
@@ -206,6 +212,7 @@ void rooms_mode_submit(const char* text) {
         if (strncmp(text, "/dm ", 4) == 0) { const char* t = text + 4; while (*t == ' ' || *t == '@') t++; if (*t) chronicle_open_direct_async(t); else tui_append_line(TUI_STYLE_ERROR, "usage: /dm <agent>"); return; }
         if (strcmp(text, "/close") == 0) { if (s_room[0]) chronicle_close_room_async(s_room); return; }
         if (strcmp(text, "/reconnect") == 0) { s_room[0] = 0; chronicle_connect_async(); return; }
+        if (strcmp(text, "/signin") == 0) { view_signin_start(); return; }
         if (strcmp(text, "/agents") == 0) {
             int64_t now = plat_now_ms();
             chronicle_lock();
@@ -257,8 +264,8 @@ void rooms_mode_enter(void) {
     s_active = true;
     tui_clear();
     if (!app_config_has_chronicle()) {
-        tui_append_line(TUI_STYLE_SYSTEM, "Rooms: not signed in. Open the setup page on your phone (F1 → Set up from phone) and press");
-        tui_append_line(TUI_STYLE_SYSTEM, "\"Sign in with GitHub\" under Chronicle rooms.");
+        tui_append_line(TUI_STYLE_SYSTEM, "Rooms: not signed in. Type /signin (or F1 → Sign in to chronicle): the badge shows a QR,");
+        tui_append_line(TUI_STYLE_SYSTEM, "you approve on your phone with GitHub. The badge needs Wi-Fi with internet for this.");
         set_prompt_for_room();
         return;
     }

@@ -26,6 +26,7 @@
 #include "ui/ui.h"
 #include "ui/view_provision.h"
 #include "ui/view_settings.h"
+#include "ui/view_signin.h"
 #include "ui/view_ssh.h"
 #include "ui/view_tui.h"
 
@@ -164,10 +165,11 @@ static void cb_about(void) {
     else tui_appendf(TUI_STYLE_SYSTEM, "wifi: not connected (%s)", wifi_sta_last_error()[0] ? wifi_sta_last_error() : "idle");
 }
 static void cb_ssh_host_changed(void) { update_status_line(); }
+static void cb_chronicle_signin(void) { ui_pop(); view_signin_start(); }
 static const settings_callbacks_t s_settings_cb = {
     .on_mode_changed = cb_mode_changed, .on_theme_changed = cb_theme_changed, .on_font_changed = cb_font_changed,
     .on_mcp_toggled = cb_mcp_toggled, .on_setup_from_phone = cb_setup, .on_forget_wifi = cb_forget_wifi,
-    .on_about = cb_about, .on_ssh_host_changed = cb_ssh_host_changed,
+    .on_about = cb_about, .on_ssh_host_changed = cb_ssh_host_changed, .on_chronicle_signin = cb_chronicle_signin,
 };
 
 static void mcp_done_cb(void* arg) { (void)arg; update_status_line(); tui_appendf(TUI_STYLE_MUTED, "MCP: %d tools from %d server(s)", tools_mcp_count(), app_config()->mcp_count); }

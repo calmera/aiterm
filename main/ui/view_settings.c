@@ -9,7 +9,7 @@
 #define MAX_ITEMS 40
 cfg_mode_t app_next_mode(cfg_mode_t m);  // main.c: AI -> SSH -> Rooms (when signed in) -> AI
 
-typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_ROOMS, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_HEADER } item_kind_t;
+typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_ROOMS, IT_SIGNIN, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_HEADER } item_kind_t;
 typedef struct { item_kind_t kind; int index; } item_t;
 
 static ui_view_t s_view;
@@ -31,6 +31,7 @@ static void build_items(void) {
     for (int i = 0; i < c->mcp_count && s_n < MAX_ITEMS - 10; i++) s_items[s_n++] = (item_t){IT_MCP, i};
     s_items[s_n++] = (item_t){IT_SSH_HOST, 0};
     s_items[s_n++] = (item_t){IT_ROOMS, 0};
+    s_items[s_n++] = (item_t){IT_SIGNIN, 0};
     s_items[s_n++] = (item_t){IT_THEME, 0};
     s_items[s_n++] = (item_t){IT_FONT, 0};
     s_items[s_n++] = (item_t){IT_SETUP, 0};
@@ -44,9 +45,10 @@ static void item_text(const item_t* it, char* buf, size_t n) {
     switch (it->kind) {
         case IT_MODE: snprintf(buf, n, "Mode                 %s", c->ui.default_mode == CFG_MODE_SSH ? "SSH" : c->ui.default_mode == CFG_MODE_ROOMS ? "Rooms" : "AI"); break;
         case IT_ROOMS:
-            if (app_config_has_chronicle()) snprintf(buf, n, "Chronicle rooms      %s · account %s · store %s  (change on phone)", c->chronicle.login, c->chronicle.account, c->chronicle.store);
-            else snprintf(buf, n, "Chronicle rooms      (not signed in — sign in with GitHub on the phone page)");
+            if (app_config_has_chronicle()) snprintf(buf, n, "Chronicle rooms      %s · account %s · store %s  (account/store on phone)", c->chronicle.login, c->chronicle.account, c->chronicle.store);
+            else snprintf(buf, n, "Chronicle rooms      (not signed in)");
             break;
+        case IT_SIGNIN: snprintf(buf, n, "%s", app_config_has_chronicle() ? "Sign in to chronicle again  →  (QR + GitHub on your phone; needs Wi-Fi)" : "Sign in to chronicle →  (QR + GitHub on your phone; needs Wi-Fi)"); break;
         case IT_INFERENCE: {
             char key[16]; app_config_mask_secret(c->inference.api_key, key, sizeof(key));
             snprintf(buf, n, "Inference            %s · %s · key %s  (change on phone)",
@@ -101,6 +103,7 @@ static void activate(void) {
         case IT_THEME: c->ui.dark = !c->ui.dark; app_config_save(); if (s_cb.on_theme_changed) s_cb.on_theme_changed(); break;
         case IT_FONT: c->ui.font_size = (uint8_t)((c->ui.font_size + 1) % 3); app_config_save(); if (s_cb.on_font_changed) s_cb.on_font_changed(); break;
         case IT_SETUP: if (s_cb.on_setup_from_phone) s_cb.on_setup_from_phone(); return;
+        case IT_SIGNIN: if (s_cb.on_chronicle_signin) s_cb.on_chronicle_signin(); return;
         case IT_FORGET: if (s_cb.on_forget_wifi) s_cb.on_forget_wifi(); return;
         case IT_ABOUT: if (s_cb.on_about) s_cb.on_about(); return;
         default: break;

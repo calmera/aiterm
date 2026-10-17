@@ -66,6 +66,7 @@ const char* chronicle_principal(void) { return s_principal; }
 const char* chronicle_live_text(void) { return s_live_text; }
 void chronicle_set_event_cb(chron_event_cb_t cb, void* user) { s_ev = cb; s_ev_user = user; }
 void chronicle_emit_info(const char* text) { emit(CHRON_EV_INFO, NULL, text); }
+void chronicle_emit(chron_event_t ev, const char* room_id, const char* text) { emit(ev, room_id, text); }
 const char* chronicle_state_text(void) {
     switch (s_state) {
         case CHRON_ST_IDLE: return "offline";

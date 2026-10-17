@@ -218,7 +218,7 @@ static esp_err_t h_chron_login_start(httpd_req_t* req) {
             cJSON_Delete(o); plat_free(body); }
     }
     char err[160];
-    if (chron_login_start(refresh, err, sizeof(err)) != ESP_OK) return send_err(req, err);
+    if (chron_login_start_async(refresh, err, sizeof(err)) != ESP_OK) return send_err(req, err);
     char* s = chron_login_status_json();
     esp_err_t r = send_json(req, s);
     free(s);

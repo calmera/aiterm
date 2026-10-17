@@ -29,6 +29,7 @@ typedef enum {
     CHRON_EV_ROOM_OPENED,  // a room this device asked for exists now: room_id
     CHRON_EV_ERROR,        // text
     CHRON_EV_INFO,         // text (sign-in progress and the like)
+    CHRON_EV_LOGIN,        // the sign-in flow changed state (text = state name); see chron_login.h
 } chron_event_t;
 // Called on the network tasks, never on the UI task; the receiver marshals with ui_post().
 typedef void (*chron_event_cb_t)(chron_event_t ev, const char* room_id, const char* text, void* user);
@@ -63,6 +64,7 @@ esp_err_t chronicle_identity(const char* token, chron_user_info_t* who, chron_me
 char*     chronicle_test_account_json(void);  // {"ok":true,"principal":..,"account":..,"ops":N} or {"ok":false,"error":..}; free()
 esp_err_t chronicle_fresh_token(char* err, size_t err_len);  // refreshes the GitHub token when it is about to lapse (saved)
 void      chronicle_emit_info(const char* text);  // sign-in progress lines for the TUI
+void      chronicle_emit(chron_event_t ev, const char* room_id, const char* text);
 
 #ifdef __cplusplus
 }
