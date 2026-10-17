@@ -9,6 +9,7 @@
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "tca8418_regs.h"
@@ -35,9 +36,11 @@ static void tca8418_interrupt_thread_entry(void* pvParameters) {
     bool wait = false;
 
     while (true) {
-        // Wait for interrupt
+        // Wait for interrupt, but poll the status register at a typing-friendly rate anyway:
+        // on the WHY2025 badge the TCA8418 INT line does not reach the P4 (BadgeVMS passes
+        // GPIO_NUM_NC for it and polls), and a 1 s poll made the keyboard feel dead.
         if (wait) {
-            xSemaphoreTake(handle->interrupt_semaphore, pdMS_TO_TICKS(1000));
+            xSemaphoreTake(handle->interrupt_semaphore, pdMS_TO_TICKS(20));
         }
 
         bool      cad_int      = false;
@@ -53,6 +56,19 @@ static void tca8418_interrupt_thread_entry(void* pvParameters) {
 
         if (!cad_int && !ovr_flow_int && !k_lck_int && !gpi_int && !k_int) {
             // No interrupt
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+            // ai-terminal bring-up: every 10 s dump the raw status / event-count / config registers
+            static TickType_t next_dump = 0;
+            if ((int32_t)(xTaskGetTickCount() - next_dump) >= 0) {
+                next_dump = xTaskGetTickCount() + pdMS_TO_TICKS(10000);
+                uint8_t st = 0xFF, ec = 0xFF, cfg = 0xFF;
+                tca8418_read_reg(handle, TCA8418_REG_INT_STAT, &st);
+                tca8418_read_reg(handle, TCA8418_REG_KEY_LCK_EC, &ec);
+                tca8418_read_reg(handle, TCA8418_REG_CFG, &cfg);
+                ESP_LOGI(TAG, "poll: INT_STAT=0x%02x KEY_LCK_EC=0x%02x CFG=0x%02x int_pin=%d level=%d", st, ec, cfg,
+                         (int)handle->interrupt_pin, handle->interrupt_pin >= 0 ? gpio_get_level(handle->interrupt_pin) : -1);
+            }
+#endif
             wait = true;
             continue;
         }

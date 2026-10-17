@@ -39,6 +39,7 @@ static void on_key(ui_view_t* v, const ui_key_t* k) {
 }
 static void on_close(ui_view_t* v) { (void)v; render_tool_finish("{\"status\":\"shown\"}"); s_col = NULL; }
 
+static int s_last_h = 0;  // height of the block created by the last add_spangroup() call
 static lv_obj_t* add_spangroup(lv_obj_t* parent, const md_block_t* b, const lv_font_t* base, const lv_font_t* bold, lv_color_t color, int x, int width, const char* prefix) {
     const ui_theme_t* th = ui_theme();
     lv_obj_t* sg = lv_spangroup_create(parent);
@@ -65,8 +66,14 @@ static lv_obj_t* add_spangroup(lv_obj_t* parent, const md_block_t* b, const lv_f
         else lv_style_set_text_color(st, color);
     }
     lv_obj_set_pos(sg, x, 0);
+    // LVGL 9: spans added with lv_spangroup_new_span()/lv_span_set_text() are only measured
+    // after an explicit refresh; without it get_expand_height() returned 0 on the badge and
+    // every block was stacked on top of the previous one.
+    lv_spangroup_refresh(sg);
     int h = lv_spangroup_get_expand_height(sg, width);
+    if (h <= 0) h = lv_font_get_line_height(base);
     lv_obj_set_height(sg, h + 2);
+    s_last_h = h + 2;  // lv_obj_get_height() would still return the pre-layout (0) size here
     return sg;
 }
 
@@ -109,7 +116,7 @@ void view_markdown_show(const char* markdown, const char* title) {
                 lv_obj_set_size(bar, 2, lh);
                 lv_obj_set_pos(bar, MARGIN, y);
                 o = add_spangroup(s_col, b, ui_font(), ui_font_bold(), th->muted, MARGIN + cw, width - cw, NULL);
-                lv_obj_set_height(bar, lv_obj_get_height(o));
+                lv_obj_set_height(bar, s_last_h);
                 break;
             }
             case MD_BULLET: case MD_NUMBERED: {
@@ -152,11 +159,15 @@ void view_markdown_show(const char* markdown, const char* title) {
             case MD_TABLE: {
                 int widths[32] = {0};
                 int nc = b->ncols > 32 ? 32 : b->ncols;
-                for (int r = 0; r < b->nrows; r++) for (int ci = 0; ci < nc; ci++) { int l = ui_utf8_len(b->cells[r * b->ncols + ci]); if (l > widths[ci]) widths[ci] = l > 40 ? 40 : l; }
+                // cells are shown as plain text: strip `code`, **bold**, [links](url)
+                int ncell = b->nrows * b->ncols;
+                char** plain = (char**)plat_calloc((size_t)(ncell > 0 ? ncell : 1), sizeof(char*));
+                for (int ci = 0; ci < ncell; ci++) plain[ci] = md_inline_plain(b->cells[ci]);
+                for (int r = 0; r < b->nrows; r++) for (int ci = 0; ci < nc; ci++) { int l = ui_utf8_len(plain[r * b->ncols + ci]); if (l > widths[ci]) widths[ci] = l > 40 ? 40 : l; }
                 jsonbuf_t j; jb_init(&j);
                 for (int r = 0; r < b->nrows; r++) {
                     for (int ci = 0; ci < nc; ci++) {
-                        const char* s = b->cells[r * b->ncols + ci];
+                        const char* s = plain[r * b->ncols + ci];
                         int len = ui_utf8_len(s);
                         if (ci) jb_append_str(&j, " │ ");
                         if (len > widths[ci]) { jb_append(&j, s, ui_utf8_offset(s, widths[ci] - 1)); jb_append_str(&j, "…"); }
@@ -166,6 +177,8 @@ void view_markdown_show(const char* markdown, const char* title) {
                     if (r == 0) { for (int ci = 0; ci < nc; ci++) { if (ci) jb_append_str(&j, "─┼─"); for (int k = 0; k < widths[ci]; k++) jb_append_str(&j, "─"); } jb_append_char(&j, '\n'); }
                 }
                 if (j.len && j.data[j.len - 1] == '\n') { j.len--; j.data[j.len] = 0; }
+                for (int ci = 0; ci < ncell; ci++) plat_free(plain[ci]);
+                plat_free(plain);
                 lv_obj_t* l = ui_mono_label(s_col, ui_font(), th->fg);
                 lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
                 lv_obj_set_width(l, width);
@@ -178,7 +191,7 @@ void view_markdown_show(const char* markdown, const char* title) {
         }
         if (o) {
             lv_obj_set_y(o, y);
-            y += lv_obj_get_height(o) + (b->type == MD_BULLET || b->type == MD_NUMBERED ? 2 : lh / 2);
+            y += s_last_h + (b->type == MD_BULLET || b->type == MD_NUMBERED ? 2 : lh / 2);
         }
     }
     md_free(blocks);

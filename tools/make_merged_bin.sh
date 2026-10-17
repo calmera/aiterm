@@ -26,3 +26,8 @@ cd "$BUILD"
 $ESPTOOL --chip esp32p4 merge_bin -o "$OUT" $ARGS
 echo "wrote $OUT ($(stat -c %s "$OUT") bytes)"
 cp "$BUILD/flasher_args.json" "$(dirname "$OUT")/flasher_args.json"
+# Also publish the individual parts: flash.sh writes these at their offsets so the NVS partition
+# (0x9000, the saved Wi-Fi/inference settings) is left untouched. The merged image pads the gap
+# between the partition table and otadata with 0xFF, which erases NVS on every flash.
+mkdir -p "$(dirname "$OUT")/parts"
+cp "$BUILD/bootloader/bootloader.bin" "$BUILD/partition_table/partition-table.bin" "$BUILD/ota_data_initial.bin" "$BUILD/ai-terminal.bin" "$(dirname "$OUT")/parts/"

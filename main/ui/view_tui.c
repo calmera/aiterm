@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "esp_log.h"
 #include "sdkconfig.h"
 #include "util/platform.h"
@@ -16,7 +17,6 @@ typedef struct { char* text; uint8_t style; } sb_line_t;
 static ui_view_t*  s_view = NULL;
 static lv_obj_t*   s_rows[MAX_ROWS];
 static int         s_nrows = 0;
-static lv_obj_t*   s_status = NULL;
 static lv_obj_t*   s_sep1 = NULL;
 static lv_obj_t*   s_input = NULL;
 static lv_obj_t*   s_cursor = NULL;
@@ -40,7 +40,20 @@ static char*       s_hist[HISTORY_N];
 static int         s_hist_n = 0;
 static int         s_hist_pos = -1;  // -1 = not browsing
 static char        s_hist_saved[INPUT_MAX];
-static char        s_status_text[160] = "";
+// System bar (top) and segmented status line (bottom)
+static lv_obj_t*   s_top       = NULL;
+static lv_obj_t*   s_clock     = NULL;
+static lv_obj_t*   s_net_lbl   = NULL;
+static lv_obj_t*   s_wifi_bar[4];
+static lv_obj_t*   s_batt_out  = NULL;
+static lv_obj_t*   s_batt_fill = NULL;
+static lv_obj_t*   s_batt_lbl  = NULL;
+static lv_obj_t*   s_status_bg = NULL;
+#define STATUS_SEGS 5
+static lv_obj_t*   s_seg[STATUS_SEGS];
+static lv_timer_t* s_clock_timer = NULL;
+static struct { char mode[8]; bool ssh; char model[64]; int gauge_pct; bool gauge_est; char amount[24]; int tools; } s_st = {.mode = "AI", .gauge_pct = -1, .tools = -1};
+static struct { bool wifi_connected; int rssi; char ssid[33]; char net_text[48]; int battery_pct; bool charging; } s_sys = {.battery_pct = -1};
 static tui_submit_cb_t s_submit = NULL;
 static void*       s_submit_user = NULL;
 
@@ -90,14 +103,18 @@ static lv_color_t style_color(uint8_t st) {
 // Layout
 // ---------------------------------------------------------------------------------------
 static int line_h(void) { return ui_line_h(); }
+static int topbar_h(void) { return line_h() + 6; }
 int tui_visible_rows(void) {
     int lh = line_h();
-    int avail = ui_screen_h() - 2 * lh - 1;  // status + input + separator
+    int avail = ui_screen_h() - topbar_h() - 2 * lh - 1;  // system bar + status + input + separator
     int r = avail / lh;
     if (r > MAX_ROWS) r = MAX_ROWS;
     return r < 1 ? 1 : r;
 }
 int tui_cols(void) { int c = ui_cols(); return c < 10 ? 10 : c; }
+
+static void render_status(void);
+static void render_sysbar(void);
 
 static void build_widgets(void) {
     lv_obj_t* root = s_view->root;
@@ -105,23 +122,49 @@ static void build_widgets(void) {
     lv_obj_clean(root);
     lv_obj_set_style_bg_color(root, t->bg, 0);
     int lh = line_h();
+    int th = topbar_h();
     int rows = tui_visible_rows();
-    int top = ui_screen_h() - 2 * lh - 1 - rows * lh;  // leftover space goes to the top
+    int top = ui_screen_h() - 2 * lh - 1 - rows * lh;  // leftover space goes between the bar and the text
     s_nrows = rows;
+    // --- system bar (top)
+    s_top = lv_obj_create(root);
+    ui_style_plain(s_top, t->bar_bg);
+    lv_obj_set_size(s_top, ui_screen_w(), th);
+    lv_obj_set_pos(s_top, 0, 0);
+    s_clock = ui_mono_label(s_top, ui_font_bold(), t->fg);
+    lv_obj_set_pos(s_clock, 6, 3);
+    s_net_lbl = ui_mono_label(s_top, ui_font(), t->fg);
+    for (int i = 0; i < 4; i++) { s_wifi_bar[i] = lv_obj_create(s_top); ui_style_plain(s_wifi_bar[i], t->seg_bg); }
+    s_batt_out = lv_obj_create(s_top);
+    ui_style_plain(s_batt_out, t->bar_bg);
+    lv_obj_set_style_border_width(s_batt_out, 1, 0);
+    lv_obj_set_style_border_color(s_batt_out, t->fg, 0);
+    lv_obj_set_style_radius(s_batt_out, 2, 0);
+    s_batt_fill = lv_obj_create(s_batt_out);
+    ui_style_plain(s_batt_fill, t->ok);
+    s_batt_lbl = ui_mono_label(s_top, ui_font(), t->fg);
+    // --- scrollback
     for (int i = 0; i < rows; i++) {
         s_rows[i] = ui_mono_label(root, ui_font(), t->fg);
         lv_obj_set_pos(s_rows[i], 2, top + i * lh);
         lv_obj_set_width(s_rows[i], ui_screen_w() - 4);
     }
+    // --- status line (bottom): coloured segments on a bar background
     int y_status = ui_screen_h() - 2 * lh - 1;
     s_sep1 = lv_obj_create(root);
-    ui_style_plain(s_sep1, t->muted);
+    ui_style_plain(s_sep1, t->seg_bg);
     lv_obj_set_size(s_sep1, ui_screen_w(), 1);
     lv_obj_set_pos(s_sep1, 0, y_status);
-    s_status = ui_mono_label(root, ui_font(), t->muted);
-    lv_obj_set_pos(s_status, 2, y_status + 1);
-    lv_obj_set_width(s_status, ui_screen_w() - 4);
-    lv_label_set_text(s_status, s_status_text);
+    s_status_bg = lv_obj_create(root);
+    ui_style_plain(s_status_bg, t->bar_bg);
+    lv_obj_set_size(s_status_bg, ui_screen_w(), lh);
+    lv_obj_set_pos(s_status_bg, 0, y_status + 1);
+    for (int i = 0; i < STATUS_SEGS; i++) {
+        s_seg[i] = ui_mono_label(s_status_bg, ui_font(), t->fg);
+        lv_obj_set_style_bg_opa(s_seg[i], LV_OPA_COVER, 0);
+        lv_obj_add_flag(s_seg[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    // --- input line
     int y_input = ui_screen_h() - lh;
     s_cursor = lv_obj_create(root);
     ui_style_plain(s_cursor, t->sel_bg);
@@ -133,7 +176,118 @@ static void build_widgets(void) {
     s_cursor_ch = ui_mono_label(root, ui_font(), t->sel_fg);
     lv_obj_set_pos(s_cursor_ch, 2, y_input);
     lv_obj_set_width(s_cursor_ch, ui_char_w() + 2);
+    render_status();
+    render_sysbar();
     s_dirty = true;
+}
+
+// ---------------------------------------------------------------------------------------
+// Status line + system bar
+// ---------------------------------------------------------------------------------------
+static void seg_place(int i, int* x, const char* text, lv_color_t fg, lv_color_t bg, const lv_font_t* font) {
+    lv_obj_t* l = s_seg[i];
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, fg, 0);
+    lv_obj_set_style_bg_color(l, bg, 0);
+    lv_label_set_text(l, text);
+    lv_obj_set_pos(l, *x, 0);
+    lv_obj_clear_flag(l, LV_OBJ_FLAG_HIDDEN);
+    *x += ui_utf8_len(text) * ui_char_w();
+}
+
+static void render_status(void) {
+    if (!s_status_bg) return;
+    const ui_theme_t* t = ui_theme();
+    int cols = tui_cols();
+    for (int i = 0; i < STATUS_SEGS; i++) lv_obj_add_flag(s_seg[i], LV_OBJ_FLAG_HIDDEN);
+    char mode[12], gauge[48] = "", amount[32] = "", tools[20] = "";
+    snprintf(mode, sizeof(mode), " %s ", s_st.mode[0] ? s_st.mode : "AI");
+    int pct = s_st.gauge_pct;
+    if (pct >= 0) {
+        if (pct > 100) pct = 100;
+        int filled = (pct * 8 + 50) / 100;
+        size_t n = (size_t)snprintf(gauge, sizeof(gauge), " ");
+        for (int i = 0; i < 8; i++) n += (size_t)snprintf(gauge + n, sizeof(gauge) - n, "%s", i < filled ? "█" : "░");
+        snprintf(gauge + n, sizeof(gauge) - n, " %s%d%% ", s_st.gauge_est ? "~" : "", pct);
+    }
+    if (s_st.amount[0]) snprintf(amount, sizeof(amount), " %s ", s_st.amount);
+    if (s_st.tools >= 0) snprintf(tools, sizeof(tools), " %d tools ", s_st.tools);
+    // the model segment takes what is left of the line
+    int fixed = ui_utf8_len(mode) + ui_utf8_len(gauge) + ui_utf8_len(amount) + ui_utf8_len(tools);
+    int avail = cols - fixed - 2;
+    if (avail < 6) avail = 6;
+    char model[72];
+    if (ui_utf8_len(s_st.model) > avail) {
+        int cut = ui_utf8_offset(s_st.model, avail - 1);
+        snprintf(model, sizeof(model), " %.*s… ", cut, s_st.model);
+    } else {
+        snprintf(model, sizeof(model), " %s ", s_st.model[0] ? s_st.model : "no model");
+    }
+    int x = 0;
+    seg_place(0, &x, mode, lv_color_hex(0xFFFFFF), s_st.ssh ? t->accent2 : t->accent, ui_font_bold());
+    seg_place(1, &x, model, t->fg, t->seg_bg, ui_font());
+    if (gauge[0]) seg_place(2, &x, gauge, pct >= 85 ? t->error : pct >= 60 ? t->warn : t->ok, t->bar_bg, ui_font());
+    if (amount[0]) seg_place(3, &x, amount, t->fg, t->bar_bg, ui_font());
+    if (tools[0]) seg_place(4, &x, tools, t->muted, t->bar_bg, ui_font());
+}
+
+static void render_sysbar(void) {
+    if (!s_top) return;
+    const ui_theme_t* t = ui_theme();
+    int th = topbar_h(), lh = line_h(), cw = ui_char_w();
+    // left: clock once the network time is in, the app name before that
+    char left[24];
+    time_t now = time(NULL);
+    if (now > 1700000000) { struct tm tm; localtime_r(&now, &tm); strftime(left, sizeof(left), "%H:%M", &tm); }
+    else snprintf(left, sizeof(left), "ai-terminal");
+    lv_label_set_text(s_clock, left);
+    // right side, laid out from the right edge inwards
+    int x = ui_screen_w() - 6;
+    if (s_sys.battery_pct >= 0) {
+        char b[8]; snprintf(b, sizeof(b), "%d%%", s_sys.battery_pct);
+        x -= ui_utf8_len(b) * cw;
+        lv_label_set_text(s_batt_lbl, b);
+        lv_obj_set_pos(s_batt_lbl, x, 3);
+        int ow = 22, oh = lh - 6;
+        x -= ow + 5;
+        lv_obj_set_size(s_batt_out, ow, oh);
+        lv_obj_set_pos(s_batt_out, x, (th - oh) / 2);
+        int fw = (ow - 4) * s_sys.battery_pct / 100;
+        lv_obj_set_size(s_batt_fill, fw < 1 ? 1 : fw, oh - 4);
+        lv_obj_set_pos(s_batt_fill, 1, 1);
+        lv_obj_set_style_bg_color(s_batt_fill, s_sys.charging ? t->accent : s_sys.battery_pct <= 15 ? t->error : s_sys.battery_pct <= 30 ? t->warn : t->ok, 0);
+        lv_obj_clear_flag(s_batt_out, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_batt_lbl, LV_OBJ_FLAG_HIDDEN);
+        x -= 10;
+    } else {
+        lv_obj_add_flag(s_batt_out, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_batt_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
+    const char* txt = s_sys.wifi_connected ? s_sys.ssid : s_sys.net_text;
+    x -= ui_utf8_len(txt) * cw;
+    lv_label_set_text(s_net_lbl, txt);
+    lv_obj_set_pos(s_net_lbl, x, 3);
+    lv_obj_set_style_text_color(s_net_lbl, s_sys.wifi_connected ? t->fg : t->warn, 0);
+    x -= 6;
+    int level = !s_sys.wifi_connected ? 0 : s_sys.rssi >= -60 ? 4 : s_sys.rssi >= -67 ? 3 : s_sys.rssi >= -75 ? 2 : 1;
+    lv_color_t on = level >= 3 ? t->ok : level == 2 ? t->warn : t->error;
+    int bw = 4, gap = 2, maxh = th - 8;
+    for (int i = 3; i >= 0; i--) {
+        int bh = maxh * (i + 1) / 4;
+        x -= bw;
+        lv_obj_set_size(s_wifi_bar[i], bw, bh);
+        lv_obj_set_pos(s_wifi_bar[i], x, th - 4 - bh);
+        lv_obj_set_style_bg_color(s_wifi_bar[i], i < level ? on : t->seg_bg, 0);
+        x -= gap;
+    }
+}
+
+static void clock_cb(lv_timer_t* tm) {
+    (void)tm;
+    static int last_min = -1;
+    time_t now = time(NULL);
+    struct tm lt; localtime_r(&now, &lt);
+    if (lt.tm_min != last_min) { last_min = lt.tm_min; render_sysbar(); }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -387,12 +541,30 @@ void tui_create(ui_view_t* v) {
     lv_obj_clear_flag(v->root, LV_OBJ_FLAG_SCROLLABLE);
     build_widgets();
     s_refresh = lv_timer_create(refresh_timer_cb, 30, NULL);
+    s_clock_timer = lv_timer_create(clock_cb, 1000, NULL);
     s_blink   = lv_timer_create(blink_cb, 500, NULL);
     ui_set_root(v);
 }
-void tui_set_status(const char* text) {
-    strlcpy(s_status_text, text ? text : "", sizeof(s_status_text));
-    if (s_status) lv_label_set_text(s_status, s_status_text);
+void tui_set_status_info(const tui_status_t* st) {
+    if (!st) return;
+    strlcpy(s_st.mode, st->mode ? st->mode : "AI", sizeof(s_st.mode));
+    s_st.ssh = st->ssh;
+    strlcpy(s_st.model, st->model ? st->model : "", sizeof(s_st.model));
+    s_st.gauge_pct = st->gauge_pct;
+    s_st.gauge_est = st->gauge_est;
+    strlcpy(s_st.amount, st->amount ? st->amount : "", sizeof(s_st.amount));
+    s_st.tools = st->tools;
+    render_status();
+}
+void tui_set_sysbar(const tui_sysbar_t* sb) {
+    if (!sb) return;
+    s_sys.wifi_connected = sb->wifi_connected;
+    s_sys.rssi = sb->rssi;
+    strlcpy(s_sys.ssid, sb->ssid ? sb->ssid : "", sizeof(s_sys.ssid));
+    strlcpy(s_sys.net_text, sb->net_text ? sb->net_text : "", sizeof(s_sys.net_text));
+    s_sys.battery_pct = sb->battery_pct;
+    s_sys.charging = sb->charging;
+    render_sysbar();
 }
 void tui_set_prompt(const char* prompt) { strlcpy(s_prompt, prompt ? prompt : "", sizeof(s_prompt)); s_dirty = true; }
 void tui_set_submit_cb(tui_submit_cb_t cb, void* user) { s_submit = cb; s_submit_user = user; }

@@ -74,8 +74,11 @@ static esp_err_t bsp_display_initialize_panel(void) {
     .dpi_clk_src        = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
      .dpi_clock_freq_mhz = 47,
      .virtual_channel    = 0,
-     .in_color_format  = LCD_COLOR_FMT_RGB888,
-     .out_color_format = LCD_COLOR_FMT_RGB888,
+     // 16-bit RGB565 like the badge's stock firmware (BadgeVMS, FRAMEBUFFER_BPP=2). The upstream
+     // BSP uses RGB888 here, which produced vertical stripes and garbled rows on a production
+     // WHY2025 badge with ESP-IDF 6.0.2 (ai-terminal bring-up, 2026-10-17).
+     .in_color_format  = LCD_COLOR_FMT_RGB565,
+     .out_color_format = LCD_COLOR_FMT_RGB565,
      .num_fbs = 1,
      .video_timing =
          {
@@ -103,8 +106,10 @@ static esp_err_t bsp_display_initialize_panel(void) {
     };
     const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num          = BSP_LCD_RESET_PIN,
-        .rgb_ele_order           = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel          = 24,
+        // BadgeVMS: "We are actually sending RGB data to the display. For some reason on the
+        // WHY2025 badge this is backwards" -> BGR element order.
+        .rgb_ele_order           = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel          = 16,
         .vendor_config           = &vendor_config,
         .flags.reset_active_high = 1,
     };
@@ -144,7 +149,7 @@ esp_err_t bsp_display_get_parameters(size_t* h_res, size_t* v_res, bsp_display_c
         *v_res = 720;
     }
     if (color_fmt) {
-        *color_fmt = BSP_DISPLAY_COLOR_FORMAT_24_888RGB;
+        *color_fmt = BSP_DISPLAY_COLOR_FORMAT_16_565RGB;
     }
     if (data_endian) {
         *data_endian = BSP_DISPLAY_ENDIAN_LITTLE;

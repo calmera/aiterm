@@ -48,8 +48,11 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_PM_ENABLE=n
 
-# Console: USB Serial/JTAG (the badge's USB-C goes to the P4 USB-Serial/JTAG)
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Console: UART0 (GPIO37 TX / GPIO38 RX) -> the CH340 behind the badge's SIDE USB-C socket.
+# The WHY2025 badge does not expose the P4 USB-Serial/JTAG (its pins are used by the audio
+# routing); verified on hardware 2026-10-17: logs on USB-Serial/JTAG are simply lost.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # Display
@@ -66,9 +69,16 @@ CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=28
 CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=31
 CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=30
 CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=29
-CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
-CONFIG_ESP_HOSTED_SLAVE_RESET_ONLY_IF_NECESSARY=y
-CONFIG_ESP_HOSTED_HOST_RESTART_NO_COMMUNICATION_WITH_SLAVE=n
+# C6 reset: on the WHY2025 badge the C6 EN line is P4 GPIO 12 and its BOOT line is GPIO 13
+# (BadgeVMS badgevms/drivers/esp-serial-flasher/slave_c6_flasher.c: reset_trigger_pin 12,
+# gpio0_trigger_pin 13; C6 UART on P4 GPIO 15/16). The callback variant
+# (bsp_power_set_radio_state) is a no-op stub for this target, which left the host in a 26 s
+# reboot loop whenever the SDIO handshake was missed (2026-10-17). Reset the slave on every
+# host boot so the INIT event is never missed.
+CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=n
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=12
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+CONFIG_ESP_HOSTED_SLAVE_RESET_ONLY_IF_NECESSARY=n
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
 CONFIG_BT_ENABLED=y
@@ -107,7 +117,8 @@ CONFIG_SPIFFS_PAGE_SIZE=256
 CONFIG_FATFS_LFN_HEAP=y
 
 # LVGL 9 (configured through Kconfig; CONFIG_LV_CONF_SKIP=y is the default)
-CONFIG_LV_COLOR_DEPTH_24=y
+# 16-bit colour: the WHY2025 panel runs RGB565 (see targets/why2025/badge_bsp_display.c)
+CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
@@ -173,3 +184,6 @@ CONFIG_MBEDTLS_PEM_PARSE_C=y
 # ai-terminal features
 CONFIG_AITERM_SSH=y
 CONFIG_AITERM_VOICE=n
+
+# Hardware bring-up (2026-10-17): show solid colours / colour bars for ~12 s before LVGL starts.
+CONFIG_AITERM_DISPLAY_SELFTEST=n

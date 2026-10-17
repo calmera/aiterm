@@ -26,6 +26,13 @@ menu "ai-terminal"
         help
             Two partial draw buffers of 720 x N x 3 bytes are allocated in PSRAM.
 
+    config AITERM_DISPLAY_SELFTEST
+        bool "Display self-test at boot (solid colours + colour bars, ~12 s)"
+        default n
+        help
+            Hardware bring-up aid: before LVGL starts, fill the DPI frame buffer with solid
+            colours and colour bars and log each step on the console.
+
     config AITERM_SSH
         bool "Enable SSH mode (wolfSSH + wolfSSL)"
         default y

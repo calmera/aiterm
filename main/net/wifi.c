@@ -3,6 +3,7 @@
 #include "bsp/power.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif_sntp.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -98,6 +99,18 @@ static void on_wifi_event(void* arg, esp_event_base_t base, int32_t id, void* da
             ESP_LOGI(TAG, "got ip %s", s_ip);
             xEventGroupSetBits(s_events, EV_CONNECTED);
             notify();
+            // The C6's default modem power save showed multi-second ping RTTs through ESP-Hosted
+            // on the WHY2025 badge; an interactive terminal needs latency, not battery. Done here
+            // (after association) because calling it right after esp_wifi_start() made the next
+            // esp_wifi_set_config() fail with ESP_ERR_WIFI_STATE on the 2.0.17 slave firmware.
+            esp_err_t pr = esp_wifi_set_ps(WIFI_PS_NONE);
+            ESP_LOGI(TAG, "power save off: %s", esp_err_to_name(pr));
+            // Network time for the clock in the system bar (TZ is applied in app_main).
+            static bool sntp_started = false;
+            if (!sntp_started) {
+                esp_sntp_config_t sc = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+                if (esp_netif_sntp_init(&sc) == ESP_OK) sntp_started = true;
+            }
         } else if (id == IP_EVENT_STA_LOST_IP) {
             s_ip[0] = 0;
             notify();
@@ -134,6 +147,18 @@ esp_err_t wifi_init(void) {
     apply_mode();
     r = esp_wifi_start();
     if (r != ESP_OK) { ESP_LOGE(TAG, "esp_wifi_start: %s", esp_err_to_name(r)); strlcpy(s_err, "wifi start failed", sizeof(s_err)); return r; }
+#if CONFIG_BSP_TARGET_WHY2025
+    // On the WHY2025 badge the C6 reset line (P4 GPIO 12, toggled by ESP-Hosted while the
+    // transport comes up) also resets the TCA8418 keypad controller: its CFG register drops from
+    // 0x0F to 0x00 and the keyboard goes dead. BadgeVMS avoids this by creating the keyboard
+    // device after Wi-Fi; we re-run the keypad register configuration once the Wi-Fi stack is up
+    // (esp_wifi_start() returning means the RPC link, and therefore the reset, is behind us).
+    {
+        extern esp_err_t why_keyboard_configure(void);
+        esp_err_t kr = why_keyboard_configure();
+        ESP_LOGI(TAG, "keyboard reconfigured after radio reset: %s", esp_err_to_name(kr));
+    }
+#endif
     s_started = true;
     s_available = true;
     s_state = WIFI_ST_IDLE;

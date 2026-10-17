@@ -41,6 +41,9 @@ small{color:var(--mu)}
 <label>API key <small>(may be empty for local servers; shown masked once saved)</small></label><input id="inf_key" type="password" autocomplete="off">
 <label>Model</label><input id="inf_model">
 <label>System prompt <small>(optional, appended to the device prompt)</small></label><textarea id="inf_prompt" style="min-height:70px"></textarea>
+<label>Context window <small>(tokens the model accepts, for the status-bar gauge; e.g. 128000, 200000)</small></label><input id="inf_ctx" type="number" min="0" step="1000">
+<label>Price per 1M tokens, USD <small>(input / output; leave 0 to show token counts instead of cost)</small></label>
+<div style="display:flex;gap:8px"><input id="inf_price_in" type="number" min="0" step="0.01" placeholder="input"><input id="inf_price_out" type="number" min="0" step="0.01" placeholder="output"></div>
 <button onclick="testInference()">Test</button>
 <div id="inf_msg" class="msg"></div>
 
@@ -56,6 +59,7 @@ small{color:var(--mu)}
 <label>Theme</label><select id="ui_theme"><option value="dark">dark</option><option value="light">light</option></select>
 <label>Font size</label><select id="ui_font"><option value="small">small</option><option value="medium">medium</option><option value="large">large</option></select>
 <label>Default mode</label><select id="ui_mode"><option value="ai">AI</option><option value="ssh">SSH</option></select>
+<label>Timezone <small>(POSIX TZ for the clock: CET-1CEST,M3.5.0,M10.5.0/3 · GMT0BST,M3.5.0/1,M10.5.0 · EST5EDT,M3.2.0,M11.1.0 · UTC0)</small></label><input id="ui_tz">
 
 <h2>6. Import / Export</h2>
 <small>The JSON below is the full configuration (secrets masked). Paste a configuration and press Import to load it into the form.</small>
@@ -78,8 +82,8 @@ function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;'
 function fill(){
   $('wifi_ssid').value=cfg.wifi.ssid||'';$('wifi_pass').value=cfg.wifi.password||'';
   $('inf_provider').value=cfg.inference.provider||'openai';$('inf_url').value=cfg.inference.base_url||'';
-  $('inf_key').value=cfg.inference.api_key||'';$('inf_model').value=cfg.inference.model||'';$('inf_prompt').value=cfg.inference.system_prompt||'';
-  $('ui_theme').value=cfg.ui.theme||'dark';$('ui_font').value=cfg.ui.font_size||'medium';$('ui_mode').value=cfg.ui.default_mode||'ai';
+  $('inf_key').value=cfg.inference.api_key||'';$('inf_model').value=cfg.inference.model||'';$('inf_prompt').value=cfg.inference.system_prompt||'';$('inf_ctx').value=cfg.inference.context_window||128000;$('inf_price_in').value=cfg.inference.price_in||0;$('inf_price_out').value=cfg.inference.price_out||0;
+  $('ui_theme').value=cfg.ui.theme||'dark';$('ui_font').value=cfg.ui.font_size||'medium';$('ui_mode').value=cfg.ui.default_mode||'ai';$('ui_tz').value=cfg.ui.timezone||'CET-1CEST,M3.5.0,M10.5.0/3';
   renderMcp();renderSsh();
 }
 function renderMcp(){
@@ -105,8 +109,8 @@ function addMcp(){cfg.mcp_servers.push({name:'',url:'',auth_header:'Authorizatio
 function addSsh(){cfg.ssh_hosts.push({name:'',host:'',port:22,user:'',password:''});renderSsh();}
 function collect(){
   cfg.wifi={ssid:$('wifi_ssid').value,password:$('wifi_pass').value};
-  cfg.inference={provider:$('inf_provider').value,base_url:$('inf_url').value.trim(),api_key:$('inf_key').value,model:$('inf_model').value.trim(),system_prompt:$('inf_prompt').value};
-  cfg.ui={theme:$('ui_theme').value,font_size:$('ui_font').value,default_mode:$('ui_mode').value};
+  cfg.inference={provider:$('inf_provider').value,base_url:$('inf_url').value.trim(),api_key:$('inf_key').value,model:$('inf_model').value.trim(),system_prompt:$('inf_prompt').value,context_window:parseInt($('inf_ctx').value)||0,price_in:parseFloat($('inf_price_in').value)||0,price_out:parseFloat($('inf_price_out').value)||0};
+  cfg.ui={theme:$('ui_theme').value,font_size:$('ui_font').value,default_mode:$('ui_mode').value,timezone:$('ui_tz').value.trim()};
   return cfg;
 }
 function msg(id,text,cls){const e=$(id);e.textContent=text;e.className='msg '+(cls||'');}

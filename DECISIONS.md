@@ -7,7 +7,7 @@ Each entry: what was decided, and one line of reasoning.
 3. **badge-bsp v1.6.1** (not the template's 1.1.0) — the version the reference launcher ships with and the one with the storage API the spec mentions (>=1.6); tanmatsu-wifi 1.3.1 accepts >=1.1.0.
 4. **esp-hosted fork `Nicolai-Electronics/esp-hosted-mcu` tag v2.12.3-1** — this is `nicolaielectronics/esp-hosted-tanmatsu 2.12.3~1`, the exact version tanmatsu-wifi 1.3.1 pins; it carries the "reset slave using callback" patch the badge needs. The C6 firmware is never touched.
 5. **`CONFIG_BSP_TARGET_WHY2025` + the WHY2025 SDIO pin map** from `tanmatsu-template/sdkconfigs/why2025` (CMD 33, CLK 32, D0 28, D1 31, D2 30, D3 29) — the WHY2025 badge routes the C6 differently from the Tanmatsu.
-6. **Console on USB-Serial/JTAG** — the spec states USB-C goes to the P4 USB-Serial/JTAG. (The template's why2025 sdkconfig picks UART0; logs over USB are more useful for first-run debugging.)
+6. **Console on UART0** — originally USB-Serial/JTAG because the spec said USB-C goes there. On the real WHY2025 badge the side USB-C is a CH340 on UART0 (GPIO37/38) and the P4 USB-Serial/JTAG is not wired out, so the console was moved to UART0 (2026-10-17). The bottom USB-C is the ESP32-C6's USB-Serial/JTAG (303a:1001), not the P4's.
 7. **`storage` partition is SPIFFS, not LittleFS** — ESP-IDF has SPIFFS built in; LittleFS is a registry component (joltwallet) that would have needed another vendored tree. It only holds the MCP tool-list cache.
 8. **Wi-Fi credentials live in the app's own NVS JSON config (`aiterm/config`), with `wifi_init_config.nvs_enable = false`** — the ESP-Hosted slave would otherwise persist credentials in the C6's NVS; the launcher/wifi-manager do the same.
 9. **LVGL 9.4.0, RGB888 (24 bpp), partial render into two PSRAM draw buffers, software rotation 90° via `lv_display_rotate_area` + `lv_draw_sw_rotate`, flushed with `bsp_display_blit`** — follows the launcher's pipeline (BSP RGB888 DPI framebuffer, rotation 90 == pax CCW); LVGL's ROTATION_90 pixel mapping was verified to equal pax's CCW mapping.
@@ -28,3 +28,27 @@ Each entry: what was decided, and one line of reasoning.
 24. **Markdown rendering uses `lv_spangroup` per block** (bold runs in DejaVu Sans Mono Bold, inline code in the string colour); code/diff/table views render monospace rows with LVGL label recolor (`#RRGGBB text#`), which LVGL 9.4 supports again.
 25. **Download-mode key not quoted in README** — docs.tanmatsu.cloud, wiki.badge.team and the WHY2025 badge sites are blocked from this build host, and none of the cloned repos (template, launcher, BSP, BadgeVMS) document the key. The README gives the generic "hold BOOT, tap RESET" sequence and points at the badge wiki rather than inventing a pin.
 26. **Optional components declare their requirements unconditionally in CMakeLists** — IDF collects component requirements before Kconfig is evaluated, so a `PRIV_REQUIRES` inside `if(CONFIG_AITERM_SSH)` was silently dropped (the libssh2 attempt failed with "mbedtls/version.h not found"). Only the source lists are gated on the option (wolfssl, wolfssh).
+
+## Hardware bring-up deviations from the upstream badge.team BSP (2026-10-17)
+The vendored `components/badge-bsp` WHY2025 target (commit c663c68) differs from what the badge's
+stock firmware (BadgeVMS) does on the real hardware. Each change below was made after observing the
+failure on a production badge; keep them when updating the BSP.
+7. **Panel in RGB565 + BGR** (`targets/why2025/badge_bsp_display.c`): the BSP's RGB888 gave vertical
+   stripes and garbled rows; BadgeVMS runs 16-bit with BGR element order. LVGL at `LV_COLOR_DEPTH_16`.
+8. **C6 reset via P4 GPIO 12, every boot** (`sdkconfig.defaults`): the BSP's callback reset is a no-op
+   stub on this target and left the host in a reboot loop when the SDIO handshake was missed.
+   GPIO 12 is the C6 EN line, GPIO 13 its BOOT line (BadgeVMS `slave_c6_flasher.c`).
+9. **Keypad reconfigured after the radio reset** (`main/net/wifi.c` → `why_keyboard_configure()`):
+   GPIO 12 also resets the TCA8418 (BSP_KBD_RST is -1), wiping its configuration.
+10. **Keypad polled every 20 ms** (`components/tca8418`): the INT line (GPIO 2) never fires; BadgeVMS
+    passes GPIO_NUM_NC and polls.
+11. **Key events only on press, three space keys** (`targets/why2025/badge_bsp_input.c`): the BSP
+    queued a character on release too and only knew key code 0x41 of the 0x41..0x43 space keys.
+12. **Wi-Fi power save off after association**, not right after `esp_wifi_start()`: an early
+    `esp_wifi_set_ps()` made the next `esp_wifi_set_config()` fail with ESP_ERR_WIFI_STATE on the
+    2.0.17 slave. With power save on, ping RTT through the link was 1.6-12 s; off: 5-23 ms.
+13. **Flashing keeps NVS**: `out/flash.sh` writes the parts at their offsets; the merged image
+    pads 0x9000-0x19000 with 0xFF and erased the settings on every flash.
+14. **Console on UART0** (side USB-C / CH340, `1a86:7522`, needs WCH's driver on macOS); the bottom
+    USB-C is the C6's USB-Serial/JTAG.
+

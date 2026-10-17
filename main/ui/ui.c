@@ -31,8 +31,9 @@ LV_FONT_DECLARE(mono_bold_26);
 #define SCREEN_H     720
 
 static lv_display_t*   s_disp        = NULL;
-static uint8_t*        s_fb          = NULL;  // DPI panel frame buffer (RGB888)
-static size_t          s_fb_stride   = SCREEN_W * 3;
+#define FB_BPP 2  // DPI panel frame buffer is RGB565 (little-endian uint16 per pixel)
+static uint8_t*        s_fb          = NULL;  // DPI panel frame buffer (RGB565)
+static size_t          s_fb_stride   = SCREEN_W * FB_BPP;
 static QueueHandle_t   s_input_queue = NULL;
 static QueueHandle_t   s_post_queue  = NULL;
 static TaskHandle_t    s_ui_task     = NULL;
@@ -60,9 +61,15 @@ static void theme_fill(bool dark) {
     s_theme.str      = dark ? lv_color_hex(0xA5D6FF) : lv_color_hex(0x0A3069);
     s_theme.comment  = lv_color_hex(0x8B949E);
     s_theme.code_bg  = dark ? lv_color_hex(0x1E1E1E) : lv_color_hex(0xE4E4E4);
-    s_theme.user     = dark ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x000000);
+    s_theme.user     = dark ? lv_color_hex(0x58A6FF) : lv_color_hex(0x0969DA);  // prompts stand out
     s_theme.error    = lv_color_hex(0xF85149);
     s_theme.heading  = dark ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x000000);
+    s_theme.accent   = lv_color_hex(0x1F6FEB);                                   // AI mode block
+    s_theme.accent2  = lv_color_hex(0x8957E5);                                   // SSH mode block
+    s_theme.seg_bg   = dark ? lv_color_hex(0x30363D) : lv_color_hex(0xD0D7DE);
+    s_theme.bar_bg   = dark ? lv_color_hex(0x1C2128) : lv_color_hex(0xE6EBF0);
+    s_theme.ok       = lv_color_hex(0x3FB950);
+    s_theme.warn     = lv_color_hex(0xD29922);
 }
 const ui_theme_t* ui_theme(void) { return &s_theme; }
 
@@ -106,7 +113,7 @@ int ui_screen_w(void) { return SCREEN_W; }
 int ui_screen_h(void) { return SCREEN_H; }
 
 // ---------------------------------------------------------------------------------------
-// Display driver: LVGL renders RGB888 into PSRAM partial buffers; flush rotates the area
+// Display driver: LVGL renders RGB565 into PSRAM partial buffers; flush rotates the area
 // straight into the MIPI-DSI DPI frame buffer and writes back the cache.
 // ---------------------------------------------------------------------------------------
 static lv_display_rotation_t configured_rotation(void) {
@@ -124,20 +131,28 @@ static lv_display_rotation_t configured_rotation(void) {
 static void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
     if (!s_fb) { lv_display_flush_ready(disp); return; }
     lv_display_rotation_t rot = lv_display_get_rotation(disp);
+    static bool s_logged_first_flush = false;
+    if (!s_logged_first_flush) {
+        s_logged_first_flush = true;
+        lv_draw_buf_t* db = lv_display_get_buf_active(disp);
+        ESP_LOGI(TAG, "first flush: area %dx%d at (%d,%d) rot=%d draw-buf stride=%u (flush assumes %d) cf=%d",
+                 (int)lv_area_get_width(area), (int)lv_area_get_height(area), (int)area->x1, (int)area->y1, (int)rot,
+                 db ? (unsigned)db->header.stride : 0u, (int)(lv_area_get_width(area) * FB_BPP), db ? (int)db->header.cf : -1);
+    }
     lv_area_t dst = *area;
     int32_t src_w = lv_area_get_width(area);
     int32_t src_h = lv_area_get_height(area);
-    int32_t src_stride = src_w * 3;
+    int32_t src_stride = src_w * FB_BPP;
     if (rot != LV_DISPLAY_ROTATION_0) lv_display_rotate_area(disp, &dst);
     // Clamp to the panel (should already be inside).
     if (dst.x1 < 0 || dst.y1 < 0 || dst.x2 >= SCREEN_W || dst.y2 >= SCREEN_H) { lv_display_flush_ready(disp); return; }
-    uint8_t* dest = s_fb + (size_t)dst.y1 * s_fb_stride + (size_t)dst.x1 * 3;
+    uint8_t* dest = s_fb + (size_t)dst.y1 * s_fb_stride + (size_t)dst.x1 * FB_BPP;
     if (rot == LV_DISPLAY_ROTATION_0) {
         for (int32_t y = 0; y < src_h; y++) {
             memcpy(dest + (size_t)y * s_fb_stride, px_map + (size_t)y * src_stride, (size_t)src_stride);
         }
     } else {
-        lv_draw_sw_rotate(px_map, dest, src_w, src_h, src_stride, (int32_t)s_fb_stride, rot, LV_COLOR_FORMAT_RGB888);
+        lv_draw_sw_rotate(px_map, dest, src_w, src_h, src_stride, (int32_t)s_fb_stride, rot, LV_COLOR_FORMAT_RGB565);
     }
     // Write the touched rows back from cache to PSRAM so the DSI DMA sees them.
     size_t rows  = (size_t)lv_area_get_height(&dst);
@@ -147,6 +162,43 @@ static void flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 }
 
 static uint32_t tick_cb(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+static void fb_fill565(uint16_t v) {
+    uint16_t* fb = (uint16_t*)s_fb;
+    for (size_t i = 0; i < (size_t)SCREEN_W * SCREEN_H; i++) fb[i] = v;
+    esp_cache_msync(s_fb, (size_t)SCREEN_W * SCREEN_H * FB_BPP, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+}
+
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+// Hardware bring-up: write known patterns straight into the DPI frame buffer (bypassing LVGL)
+// so a photo of the panel tells DSI/panel problems apart from LVGL/stride problems.
+static void display_selftest(void) {
+    if (!s_fb) return;
+    static const struct { const char* name; uint8_t r, g, b; } solid[] = {
+        {"red", 255, 0, 0}, {"green", 0, 255, 0}, {"blue", 0, 0, 255}, {"white", 255, 255, 255}, {"dark grey 0x11", 0x11, 0x11, 0x11}};
+    for (size_t i = 0; i < sizeof(solid) / sizeof(solid[0]); i++) {
+        ESP_LOGI(TAG, "selftest %u/5: solid %s", (unsigned)i + 1, solid[i].name);
+        fb_fill565(rgb565(solid[i].r, solid[i].g, solid[i].b));
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+    ESP_LOGI(TAG, "selftest 6: 8 vertical colour bars (black,R,G,Y,B,M,C,W), bottom quarter 1-px checkerboard");
+    uint16_t* fb = (uint16_t*)s_fb;
+    for (int y = 0; y < SCREEN_H; y++) {
+        for (int x = 0; x < SCREEN_W; x++) {
+            int bar = x * 8 / SCREEN_W;
+            uint8_t r = (bar & 1) ? 255 : 0, g = (bar & 2) ? 255 : 0, b = (bar & 4) ? 255 : 0;
+            if (y >= SCREEN_H * 3 / 4) { uint8_t v = ((x + y) & 1) ? 255 : 0; r = g = b = v; }
+            fb[(size_t)y * SCREEN_W + x] = rgb565(r, g, b);
+        }
+    }
+    esp_cache_msync(s_fb, (size_t)SCREEN_W * SCREEN_H * FB_BPP, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    ESP_LOGI(TAG, "selftest done, starting LVGL");
+}
+#endif
 
 static void display_init(void) {
     esp_lcd_panel_handle_t panel = NULL;
@@ -160,10 +212,13 @@ static void display_init(void) {
     } else {
         ESP_LOGE(TAG, "no display panel (running headless)");
     }
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+    display_selftest();
+#endif
     s_disp = lv_display_create(SCREEN_W, SCREEN_H);
-    lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB888);
+    lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
     size_t buf_lines = CONFIG_AITERM_DRAW_BUF_LINES;
-    size_t buf_sz    = (size_t)SCREEN_W * buf_lines * 3;
+    size_t buf_sz    = (size_t)SCREEN_W * buf_lines * FB_BPP;
     uint8_t* b1 = heap_caps_aligned_alloc(128, buf_sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint8_t* b2 = heap_caps_aligned_alloc(128, buf_sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!b1 || !b2) {
@@ -176,8 +231,7 @@ static void display_init(void) {
     lv_display_set_rotation(s_disp, configured_rotation());
     lv_display_set_default(s_disp);
     if (s_fb) {
-        memset(s_fb, 0x11, (size_t)SCREEN_W * SCREEN_H * 3);
-        esp_cache_msync(s_fb, (size_t)SCREEN_W * SCREEN_H * 3, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+        fb_fill565(rgb565(0x11, 0x11, 0x11));
     }
 }
 
@@ -242,6 +296,9 @@ static int64_t  s_held_next_ms = 0;
 #define REPEAT_INTERVAL_MS 45
 
 static void handle_bsp_event(const bsp_input_event_t* ev) {
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+    ESP_LOGI(TAG, "input event type=%d", (int)ev->type);  // bring-up: prove the keyboard path
+#endif
     ui_key_t k = {0};
     switch (ev->type) {
         case INPUT_EVENT_TYPE_NAVIGATION: {
@@ -444,7 +501,17 @@ void ui_init(void) {
 }
 
 void ui_task_loop(void) {
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+    int64_t next_beat = 0;
+#endif
     while (1) {
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+        if (esp_timer_get_time() >= next_beat) {  // bring-up heartbeat: proves the UI task is alive
+            next_beat = esp_timer_get_time() + 10 * 1000000LL;
+            ESP_LOGI(TAG, "ui alive: depth=%d internal=%u psram=%u", s_depth,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        }
+#endif
         uint32_t wait = lv_timer_handler();
         if (wait > 10) wait = 10;
         if (wait < 1) wait = 1;

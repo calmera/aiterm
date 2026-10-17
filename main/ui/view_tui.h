@@ -21,7 +21,29 @@ typedef enum {
 typedef void (*tui_submit_cb_t)(const char* text, void* user);
 
 void tui_create(ui_view_t* v);  // builds the view and registers it as the UI root
-void tui_set_status(const char* text);
+
+// Bottom status line, vim-style coloured segments: [ MODE ][ model ][ gauge ][ amount ][ tools ]
+typedef struct {
+    const char* mode;       // "AI" / "SSH"
+    bool        ssh;        // picks the mode colour
+    const char* model;      // model name, or user@host in SSH mode
+    int         gauge_pct;  // context window used, 0..100; <0 hides the gauge
+    bool        gauge_est;  // usage was estimated (shown as "~42%")
+    const char* amount;     // "$0.0123" or "3.5k tok"; empty/NULL hides it
+    int         tools;      // tool count; <0 hides it
+} tui_status_t;
+void tui_set_status_info(const tui_status_t* s);
+
+// Top system bar: clock (once SNTP has set the time) · Wi-Fi bars + SSID · battery (if the BSP reports one)
+typedef struct {
+    bool        wifi_connected;
+    int         rssi;         // dBm when connected
+    const char* ssid;         // when connected
+    const char* net_text;     // when not connected: "setup aiterm-1234", "no wifi", ...
+    int         battery_pct;  // 0..100, <0 = unknown (hidden)
+    bool        charging;
+} tui_sysbar_t;
+void tui_set_sysbar(const tui_sysbar_t* s);
 void tui_set_prompt(const char* prompt);
 void tui_set_submit_cb(tui_submit_cb_t cb, void* user);
 void tui_set_input_enabled(bool enabled);

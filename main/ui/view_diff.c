@@ -67,7 +67,7 @@ void view_diff_show(const char* diff, const char* old_text, const char* new_text
         }
     }
     char status[160];
-    snprintf(status, sizeof(status), "Diff%s%s · +%d −%d · A accept · R reject · Esc reject", path ? " " : "", path ? path : "", ok ? r.adds : 0, ok ? r.dels : 0);
+    snprintf(status, sizeof(status), "Diff%s%s · +%d -%d · A accept · R reject · Esc reject", path ? " " : "", path ? path : "", ok ? r.adds : 0, ok ? r.dels : 0);
     lv_obj_t* c = ui_view_create_root(&s_view, status);
     s_tv = textview_create(&s_view, c, 4);
     textview_set_lines(s_tv, lines, bg, n);

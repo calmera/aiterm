@@ -29,6 +29,9 @@ typedef struct {
     char           api_key[CFG_SECRET];
     char           model[CFG_STR];
     char           system_prompt[CFG_PROMPT];
+    int            context_window;  // tokens the model accepts (status-bar gauge), 0 = default 128k
+    float          price_in;        // USD per 1M input tokens (0 = unknown -> status bar shows tokens)
+    float          price_out;       // USD per 1M output tokens
 } cfg_inference_t;
 
 typedef struct {
@@ -52,6 +55,7 @@ typedef struct {
     uint8_t    font_size;   // 0 small, 1 medium, 2 large
     cfg_mode_t default_mode;
     int8_t     ssh_host;    // index into ssh_hosts, -1 none
+    char       timezone[64];  // POSIX TZ string for the clock (SNTP), e.g. CET-1CEST,M3.5.0,M10.5.0/3
 } cfg_ui_t;
 
 typedef struct {

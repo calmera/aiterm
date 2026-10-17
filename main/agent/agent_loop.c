@@ -32,6 +32,9 @@ static QueueHandle_t  s_cmds = NULL;
 static history_t      s_history;
 static volatile bool  s_abort = false;
 static volatile bool  s_busy = false;
+static agent_stats_t  s_stats;
+static void (*s_stats_cb)(void*) = NULL;
+static void*          s_stats_arg = NULL;
 static char           s_sysprompt[CFG_PROMPT + 512];
 
 #define MAX_ROUNDS 16
@@ -152,6 +155,20 @@ static bool do_request(int round) {
     if (anthropic) anthropic_stream_finish(&st); else openai_stream_finish(&st);
     flush_pending();
     ui_post(ui_stream_end_cb, NULL);
+    // Session statistics (status bar). Fall back to a size estimate when usage is not reported.
+    s_stats.requests++;
+    if (st.usage_in > 0 || st.usage_out > 0) {
+        s_stats.in_tokens  += (uint32_t)(st.usage_in > 0 ? st.usage_in : 0);
+        s_stats.out_tokens += (uint32_t)(st.usage_out > 0 ? st.usage_out : 0);
+        s_stats.ctx_tokens    = (uint32_t)((st.usage_in > 0 ? st.usage_in : 0) + (st.usage_out > 0 ? st.usage_out : 0));
+        s_stats.ctx_estimated = false;
+    } else {
+        uint32_t est_in = (uint32_t)((strlen(body) + 3) / 4);
+        uint32_t est_out = (uint32_t)((st.text.len + 3) / 4);
+        s_stats.in_tokens += est_in; s_stats.out_tokens += est_out;
+        s_stats.ctx_tokens = est_in + est_out; s_stats.ctx_estimated = true;
+    }
+    if (s_stats_cb) ui_post(s_stats_cb, s_stats_arg);
     plat_free(body);
 
     bool continue_turn = false;
@@ -230,7 +247,11 @@ static void agent_task(void* arg) {
         if (xQueueReceive(s_cmds, &cmd, portMAX_DELAY) != pdTRUE) continue;
         switch (cmd.kind) {
             case CMD_SUBMIT: handle_submit(cmd.text); break;
-            case CMD_NEW_SESSION: history_clear(&s_history); break;
+            case CMD_NEW_SESSION:
+                history_clear(&s_history);
+                memset(&s_stats, 0, sizeof(s_stats));
+                if (s_stats_cb) ui_post(s_stats_cb, s_stats_arg);
+                break;
         }
     }
 }
@@ -255,6 +276,8 @@ void agent_new_session(void) {
     xQueueSend(s_cmds, &c, 0);
 }
 bool agent_busy(void) { return s_busy; }
+void agent_stats_get(agent_stats_t* out) { if (out) *out = s_stats; }
+void agent_set_stats_cb(void (*cb)(void* arg), void* arg) { s_stats_cb = cb; s_stats_arg = arg; }
 
 char* agent_test_inference(void) {
     app_config_t* c = app_config();

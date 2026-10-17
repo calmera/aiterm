@@ -11,6 +11,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "sdkconfig.h"
 #include "tca8418.h"
 #include "why2025_hardware.h"
 
@@ -94,7 +95,9 @@ typedef enum {
     WHY2025_KEY_SUPER     = 62,
     WHY2025_KEY_LEFT_ALT  = 63,
     WHY2025_KEY_BACKSLASH = 64,
-    WHY2025_KEY_SPACE     = 65,
+    WHY2025_KEY_SPACE     = 65,  // left space key
+    WHY2025_KEY_SPACE_M   = 66,  // middle space key (BadgeVMS maps 0x41..0x43 all to SPACE)
+    WHY2025_KEY_SPACE_R   = 67,  // right space key
     WHY2025_KEY_RIGHT_ALT = 68,
     WHY2025_KEY_P         = 69,
     WHY2025_KEY_LEFT_BRACKET = 70,
@@ -152,8 +155,11 @@ static void send_scancode_event(bsp_input_scancode_t scancode, bool state) {
     }
 }
 
+static bool s_key_pressed_now = true;  // state of the key event currently being dispatched
+
 static void handle_keyboard_text_entry(char ascii, char ascii_shift, char const* utf8, char const* utf8_shift,
                                        char const* utf8_alt, char const* utf8_shift_alt, uint32_t modifiers) {
+    if (!s_key_pressed_now) return;  // the upstream BSP queued a character on release too (double keystrokes)
     char              value_ascii = (modifiers & BSP_INPUT_MODIFIER_SHIFT) ? ascii_shift : ascii;
     char const*       value_utf8  = (modifiers & BSP_INPUT_MODIFIER_ALT_R)
                                         ? ((modifiers & BSP_INPUT_MODIFIER_SHIFT) ? utf8_shift_alt : utf8_alt)
@@ -189,6 +195,9 @@ static void tca8418_gpi_callback(tca8418_handle_t* handle) {
 }
 
 static void tca8418_key_callback(tca8418_handle_t* handle) {
+#if CONFIG_AITERM_DISPLAY_SELFTEST
+    ESP_LOGI(TAG, "tca8418 key interrupt");  // ai-terminal bring-up: proves the keyboard IRQ path
+#endif
     // Drain the key event FIFO (up to 10 entries deep)
     for (int i = 0; i < 10; i++) {
         bool    pressed = false;
@@ -196,7 +205,7 @@ static void tca8418_key_callback(tca8418_handle_t* handle) {
         if (tca8418_get_key_event_a(handle, &pressed, &code) != ESP_OK || code == 0) {
             break;
         }
-        ESP_DRAM_LOGI(TAG, "key event %d\r\n", code);
+        s_key_pressed_now  = pressed;
         WHY2025_keys_t key = (WHY2025_keys_t)code;
 
         if (key != WHY2025_KEY_SUPER) {
@@ -386,7 +395,13 @@ static void tca8418_key_callback(tca8418_handle_t* handle) {
                 handle_keyboard_text_entry('\\', '|', "\\", "|", "̇", "̌", active_modifiers);
                 break;
             case WHY2025_KEY_SPACE:
+                send_navigation_event(BSP_INPUT_NAVIGATION_KEY_SPACE_L, pressed, active_modifiers);
+                break;
+            case WHY2025_KEY_SPACE_M:
                 send_navigation_event(BSP_INPUT_NAVIGATION_KEY_SPACE_M, pressed, active_modifiers);
+                break;
+            case WHY2025_KEY_SPACE_R:
+                send_navigation_event(BSP_INPUT_NAVIGATION_KEY_SPACE_R, pressed, active_modifiers);
                 break;
             case WHY2025_KEY_RIGHT:
                 send_navigation_event(BSP_INPUT_NAVIGATION_KEY_RIGHT, pressed, active_modifiers);
@@ -492,12 +507,9 @@ static void tca8418_key_callback(tca8418_handle_t* handle) {
     }
 }
 
-esp_err_t why_keyboard_reset_and_init() {
-    esp_err_t res = tca8418_initialize(&tca8418_handle, i2c_handle, BSP_KBD_RST, BSP_KBD_INT);
-    if (res != ESP_OK) {
-        return res;
-    }
-
+// Register-only (re)configuration of the keypad controller. On the WHY2025 badge the C6 reset
+// line (P4 GPIO 12) also resets the TCA8418, so this must be re-run after ESP-Hosted starts.
+esp_err_t why_keyboard_configure(void) {
     // Use all row and column pins as keypad (key scan) pins
     ESP_RETURN_ON_ERROR(tca8418_set_kp_gpio1(&tca8418_handle, true, true, true, true, true, true, true, true), TAG,
                         "Failed to configure keypad rows");
@@ -521,6 +533,14 @@ esp_err_t why_keyboard_reset_and_init() {
     ESP_RETURN_ON_ERROR(tca8418_set_cfg(&tca8418_handle, false, false, false, false, true, true, true, true), TAG,
                         "Failed to configure TCA8418 interrupts");
     return ESP_OK;
+}
+
+esp_err_t why_keyboard_reset_and_init() {
+    esp_err_t res = tca8418_initialize(&tca8418_handle, i2c_handle, BSP_KBD_RST, BSP_KBD_INT);
+    if (res != ESP_OK) {
+        return res;
+    }
+    return why_keyboard_configure();
 }
 
 esp_err_t bsp_input_initialize(void) {

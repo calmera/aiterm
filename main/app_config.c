@@ -18,10 +18,12 @@ void app_config_set_defaults(app_config_t* c) {
     c->inference.provider = CFG_PROVIDER_OPENAI;
     strlcpy(c->inference.base_url, "https://api.openai.com/v1", sizeof(c->inference.base_url));
     strlcpy(c->inference.model, "gpt-4.1-mini", sizeof(c->inference.model));
+    c->inference.context_window = 128000;
     c->ui.dark = true;
     c->ui.font_size = 1;
     c->ui.default_mode = CFG_MODE_AI;
     c->ui.ssh_host = -1;
+    strlcpy(c->ui.timezone, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof(c->ui.timezone));
 }
 
 void app_config_mask_secret(const char* secret, char* out, int out_len) {
@@ -50,6 +52,10 @@ static void jget_int(cJSON* o, const char* key, int* dst) {
     cJSON* v = cJSON_GetObjectItemCaseSensitive(o, key);
     if (cJSON_IsNumber(v)) *dst = v->valueint;
 }
+static void jget_float(cJSON* o, const char* key, float* dst) {
+    cJSON* v = cJSON_GetObjectItemCaseSensitive(o, key);
+    if (cJSON_IsNumber(v)) *dst = (float)v->valuedouble;
+}
 
 esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_masked) {
     cJSON* root = cJSON_Parse(json);
@@ -67,6 +73,12 @@ esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_ma
         jget_secret(o, "api_key", c->inference.api_key, sizeof(c->inference.api_key), keep_masked);
         jget_str(o, "model", c->inference.model, sizeof(c->inference.model));
         jget_str(o, "system_prompt", c->inference.system_prompt, sizeof(c->inference.system_prompt));
+        jget_int(o, "context_window", &c->inference.context_window);
+        jget_float(o, "price_in", &c->inference.price_in);
+        jget_float(o, "price_out", &c->inference.price_out);
+        if (c->inference.context_window < 0) c->inference.context_window = 0;
+        if (c->inference.price_in < 0) c->inference.price_in = 0;
+        if (c->inference.price_out < 0) c->inference.price_out = 0;
         // strip trailing slash from base_url
         size_t n = strlen(c->inference.base_url);
         while (n > 0 && c->inference.base_url[n - 1] == '/') c->inference.base_url[--n] = 0;
@@ -134,6 +146,7 @@ esp_err_t app_config_import_json(app_config_t* c, const char* json, bool keep_ma
         if (s[0]) c->ui.dark = strcmp(s, "light") != 0;
         s[0] = 0; jget_str(o, "font_size", s, sizeof(s));
         if (s[0]) c->ui.font_size = strcmp(s, "small") == 0 ? 0 : strcmp(s, "large") == 0 ? 2 : 1;
+        jget_str(o, "timezone", c->ui.timezone, sizeof(c->ui.timezone));
         s[0] = 0; jget_str(o, "default_mode", s, sizeof(s));
         if (s[0]) c->ui.default_mode = strcmp(s, "ssh") == 0 ? CFG_MODE_SSH : CFG_MODE_AI;
         int sh = c->ui.ssh_host; jget_int(o, "ssh_host", &sh);
@@ -158,6 +171,9 @@ char* app_config_export_json(const app_config_t* c, bool mask) {
     else cJSON_AddStringToObject(inf, "api_key", c->inference.api_key);
     cJSON_AddStringToObject(inf, "model", c->inference.model);
     cJSON_AddStringToObject(inf, "system_prompt", c->inference.system_prompt);
+    cJSON_AddNumberToObject(inf, "context_window", c->inference.context_window);
+    cJSON_AddNumberToObject(inf, "price_in", c->inference.price_in);
+    cJSON_AddNumberToObject(inf, "price_out", c->inference.price_out);
     cJSON* arr = cJSON_AddArrayToObject(root, "mcp_servers");
     for (int i = 0; i < c->mcp_count; i++) {
         cJSON* e = cJSON_CreateObject();
@@ -181,6 +197,7 @@ char* app_config_export_json(const app_config_t* c, bool mask) {
         cJSON_AddItemToArray(arr, e);
     }
     cJSON* ui = cJSON_AddObjectToObject(root, "ui");
+    cJSON_AddStringToObject(ui, "timezone", c->ui.timezone);
     cJSON_AddStringToObject(ui, "theme", c->ui.dark ? "dark" : "light");
     cJSON_AddStringToObject(ui, "font_size", c->ui.font_size == 0 ? "small" : c->ui.font_size == 2 ? "large" : "medium");
     cJSON_AddStringToObject(ui, "default_mode", c->ui.default_mode == CFG_MODE_SSH ? "ssh" : "ai");

@@ -1,5 +1,7 @@
 // ai-terminal — boot, BSP init, UI task, Wi-Fi bring-up, provisioning, mode dispatch.
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include <string.h>
 #include "agent/agent_loop.h"
 #include "agent/tools.h"
@@ -38,24 +40,61 @@ static void update_status_line(void);
 // ---------------------------------------------------------------------------------------
 // Status line
 // ---------------------------------------------------------------------------------------
+// "12.3k" style token counts for the status bar.
+static void fmt_tokens(uint32_t n, char* out, size_t len) {
+    if (n < 1000) snprintf(out, len, "%u", (unsigned)n);
+    else if (n < 1000000) snprintf(out, len, "%.1fk", n / 1000.0);
+    else snprintf(out, len, "%.2fM", n / 1000000.0);
+}
+
 static void update_status_line(void) {
     app_config_t* c = app_config();
-    char buf[160];
-    char ip[16] = "";
-    bool con = wifi_sta_ip(ip, sizeof(ip));
-    char net[48];
-    if (con) snprintf(net, sizeof(net), "%s %d dBm", ip, wifi_sta_rssi());
-    else if (wifi_sta_state() == WIFI_ST_CONNECTING) snprintf(net, sizeof(net), "wifi connecting");
-    else if (provisioning_ap_active()) snprintf(net, sizeof(net), "setup %s", provisioning_ap_ssid());
-    else snprintf(net, sizeof(net), "no wifi");
+    // ---- system bar: wifi + battery
+    tui_sysbar_t sb = {0};
+    char ip[16] = "", nettext[48] = "";
+    sb.wifi_connected = wifi_sta_ip(ip, sizeof(ip));
+    sb.rssi = sb.wifi_connected ? wifi_sta_rssi() : 0;
+    sb.ssid = wifi_sta_ssid();
+    if (!sb.wifi_connected) {
+        if (wifi_sta_state() == WIFI_ST_CONNECTING) snprintf(nettext, sizeof(nettext), "connecting…");
+        else if (provisioning_ap_active()) snprintf(nettext, sizeof(nettext), "setup %s", provisioning_ap_ssid());
+        else snprintf(nettext, sizeof(nettext), "no wifi");
+    }
+    sb.net_text = nettext;
+    bsp_power_battery_information_t bi;
+    if (bsp_power_get_battery_information(&bi) == ESP_OK && bi.battery_available) {
+        sb.battery_pct = (int)bi.remaining_percentage;
+        sb.charging = bi.battery_charging;
+    } else {
+        sb.battery_pct = -1;  // the WHY2025 BSP has no fuel gauge / charger driver: hidden
+    }
+    tui_set_sysbar(&sb);
+    // ---- status line
+    tui_status_t st = {.gauge_pct = -1, .tools = -1};
+    char model[80], amount[32] = "";
     if (c->ui.default_mode == CFG_MODE_SSH) {
         int i = c->ui.ssh_host >= 0 ? c->ui.ssh_host : 0;
-        if (c->ssh_count) snprintf(buf, sizeof(buf), "SSH · %s@%s · %s", c->ssh[i].user, c->ssh[i].host, net);
-        else snprintf(buf, sizeof(buf), "SSH · no host configured · %s", net);
+        if (c->ssh_count) snprintf(model, sizeof(model), "%s@%s", c->ssh[i].user, c->ssh[i].host);
+        else snprintf(model, sizeof(model), "no host configured");
+        st.mode = "SSH"; st.ssh = true;
     } else {
-        snprintf(buf, sizeof(buf), "AI · %s · %d tools · %s", c->inference.model[0] ? c->inference.model : "no model", tools_count(), net);
+        agent_stats_t as; agent_stats_get(&as);
+        int win = c->inference.context_window > 0 ? c->inference.context_window : 128000;
+        int pct = (int)(((uint64_t)as.ctx_tokens * 100 + (uint64_t)win / 2) / (uint64_t)win);
+        st.gauge_pct = pct > 100 ? 100 : pct;
+        st.gauge_est = as.ctx_estimated;
+        if (c->inference.price_in > 0 || c->inference.price_out > 0) {
+            double usd = (as.in_tokens * (double)c->inference.price_in + as.out_tokens * (double)c->inference.price_out) / 1e6;
+            snprintf(amount, sizeof(amount), usd < 0.1 ? "$%.4f" : "$%.2f", usd);
+        } else {
+            char tk[16]; fmt_tokens(as.in_tokens + as.out_tokens, tk, sizeof(tk));
+            snprintf(amount, sizeof(amount), "%s tok", tk);
+        }
+        snprintf(model, sizeof(model), "%s", c->inference.model[0] ? c->inference.model : "no model");
+        st.mode = "AI"; st.tools = tools_count();
     }
-    tui_set_status(buf);
+    st.model = model; st.amount = amount;
+    tui_set_status_info(&st);
 }
 static void ui_status_cb(void* arg) { (void)arg; update_status_line(); view_provision_update(); }
 static void wifi_status_changed(void* user) { (void)user; ui_post(ui_status_cb, NULL); }
@@ -202,6 +241,7 @@ static void ui_task(void* arg) {
     ui_set_global_key_handler(global_keys);
     tui_set_submit_cb(on_submit, NULL);
     agent_init();
+    agent_set_stats_cb(ui_status_cb, NULL);  // refresh the context gauge / cost after every request
     apply_ui_config();
     tui_set_prompt(app_config()->ui.default_mode == CFG_MODE_SSH ? "ssh> " : "> ");
     tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
@@ -241,10 +281,15 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(res);
     app_config_load();
+    {   // clock timezone (SNTP starts once Wi-Fi is up)
+        const char* tz = app_config()->ui.timezone;
+        setenv("TZ", tz[0] ? tz : "UTC0", 1);
+        tzset();
+    }
     mount_storage();
 
     const bsp_configuration_t bsp_configuration = {
-        .display = {.requested_color_format = BSP_DISPLAY_COLOR_FORMAT_24_888RGB, .num_fbs = 1},
+        .display = {.requested_color_format = BSP_DISPLAY_COLOR_FORMAT_16_565RGB, .num_fbs = 1},
     };
     esp_err_t bsp_res = bsp_device_initialize(&bsp_configuration);
     if (bsp_res != ESP_OK) ESP_LOGE(TAG, "BSP init failed: %s", esp_err_to_name(bsp_res));

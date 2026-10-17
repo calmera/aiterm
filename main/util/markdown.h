@@ -31,6 +31,7 @@ typedef struct md_block {
 } md_block_t;
 
 md_block_t* md_parse(const char* text);
+char* md_inline_plain(const char* s);  // inline markup -> plain text (caller frees)
 void        md_free(md_block_t* blocks);
 int         md_count(const md_block_t* blocks);
 // Concatenate the plain text of a block's runs (caller frees with plat_free).

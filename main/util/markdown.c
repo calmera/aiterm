@@ -89,6 +89,20 @@ static void parse_inline(md_block_t* b, const char* s, size_t n) {
     #undef FLUSH
 }
 
+// Inline markup -> plain text (code spans without backticks, links as "text (url)"), for
+// places that render a single monospace string such as table cells. Caller frees.
+char* md_inline_plain(const char* s) {
+    md_block_t tmp; memset(&tmp, 0, sizeof(tmp));
+    parse_inline(&tmp, s, strlen(s));
+    jsonbuf_t out; jb_init(&out);
+    for (int i = 0; i < tmp.nruns; i++) jb_append_str(&out, tmp.runs[i].text);
+    for (int i = 0; i < tmp.nruns; i++) plat_free(tmp.runs[i].text);
+    plat_free(tmp.runs);
+    char* r = plat_strdup(out.len ? out.data : "");
+    jb_free(&out);
+    return r;
+}
+
 static bool is_hr(const char* l, size_t n) {
     int cnt = 0; char ch = 0;
     for (size_t i = 0; i < n; i++) {
