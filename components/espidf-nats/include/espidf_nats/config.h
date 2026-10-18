@@ -50,7 +50,10 @@
 #define NATS_INBOX_ID_LENGTH 22
 
 // Protocol parsing and limits
-#define NATS_MAX_ARGV 5
+// aiterm patch: 6, not 5 — "HMSG <subject> <sid> <reply-to> <hdr bytes> <total bytes>" has six tokens, and
+// every JetStream delivery of a message with headers (the ack subject is the reply-to) is exactly that.
+// With five, the length token was lost and the message silently dropped.
+#define NATS_MAX_ARGV 6
 #define NATS_MAX_LINE_SIZE 65536        // Max control line size (64KB)
 #define NATS_MAX_PAYLOAD_SIZE 10485760  // Max message payload (10MB)
 #define NATS_MAX_SUBJECT_LEN 1024       // Max subject length

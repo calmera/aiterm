@@ -23,4 +23,4 @@
 | bmi270 | /root/Work/refs/csrc/esp32-component-bmi270 | 13e136e | ? |
 | wolfssl | /root/Work/refs/why2025-badge-firmware/sdk_apps/sshterm/thirdparty/wolfssl-5.8.2 (via why2025-badge-firmware b19bd01) | - | 5.8.2 |
 | wolfssh | /root/Work/refs/why2025-badge-firmware/sdk_apps/sshterm/thirdparty/wolfssh-1.4.20 (via why2025-badge-firmware) | - | 1.4.20 |
-| espidf-nats | https://github.com/debsahu/espidf-nats (commit 73b7118, 2026-04-16) | 73b7118 | 1.4.0 (patched: CONNECT auth_token beside JWT, 4 KB CONNECT buffer, certificate bundle on the STARTTLS path, -ERR text kept; see DECISIONS 28) |
+| espidf-nats | https://github.com/debsahu/espidf-nats (commit 73b7118, 2026-04-16) | 73b7118 | 1.4.0 (patched: CONNECT auth_token beside JWT, 4 KB CONNECT buffer, certificate bundle on the STARTTLS path, -ERR text kept, NATS_MAX_ARGV 6 for HMSG with reply-to; see DECISIONS 28) |

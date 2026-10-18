@@ -239,6 +239,7 @@ static esp_err_t h_chron_account(httpd_req_t* req) {
     cJSON_Delete(o);
     return send_ok(req);
 }
+static esp_err_t h_chron_debug(httpd_req_t* req) { char* s = chronicle_debug_json(); esp_err_t r = send_json(req, s ? s : "{}"); free(s); return r; }
 static esp_err_t h_chron_test(httpd_req_t* req) {
     char* s = chronicle_test_account_json();
     esp_err_t r = send_json(req, s ? s : "{\"ok\":false,\"error\":\"internal\"}");
@@ -286,6 +287,7 @@ esp_err_t provisioning_http_start(void) {
         {.uri = "/api/chronicle/logout", .method = HTTP_POST, .handler = h_chron_logout},
         {.uri = "/api/chronicle/account", .method = HTTP_POST, .handler = h_chron_account},
         {.uri = "/api/chronicle/test", .method = HTTP_POST, .handler = h_chron_test},
+        {.uri = "/api/chronicle/debug", .method = HTTP_GET, .handler = h_chron_debug},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
         {.uri = "/api/reset", .method = HTTP_POST, .handler = h_reset},
         {.uri = "/*", .method = HTTP_GET, .handler = h_any},  // captive portal probes

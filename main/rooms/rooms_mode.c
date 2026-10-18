@@ -11,6 +11,8 @@
 static bool     s_active = false;
 static char     s_room[CHRON_ID_MAX] = "";
 static uint64_t s_rendered_seq = 0;
+static bool     s_dirty = false;
+static lv_timer_t* s_flush_timer = NULL;
 void update_status_line_public(void);  // main.c
 
 typedef struct { chron_event_t ev; char room[CHRON_ID_MAX]; char* text; } ev_t;
@@ -118,7 +120,7 @@ static void handle_event(void* arg) {
             break;
         }
         case CHRON_EV_MESSAGE:
-            if (s_active && strcmp(e->room, s_room) == 0) append_new_messages();
+            if (s_active && strcmp(e->room, s_room) == 0) s_dirty = true;  // flushed by the timer: a replay delivers hundreds at once
             break;
         case CHRON_EV_ROOMS: break;
         case CHRON_EV_LIVE: break;
@@ -259,7 +261,13 @@ bool rooms_mode_key(const ui_key_t* k) {
 // ---------------------------------------------------------------------------------------
 // mode lifecycle / status
 // ---------------------------------------------------------------------------------------
-void rooms_mode_init(void) { chronicle_init(); chronicle_set_event_cb(event_cb, NULL); }
+static void flush_cb(lv_timer_t* t) {
+    (void)t;
+    if (!s_dirty) return;
+    s_dirty = false;
+    if (s_active && s_room[0]) append_new_messages();
+}
+void rooms_mode_init(void) { chronicle_init(); chronicle_set_event_cb(event_cb, NULL); s_flush_timer = lv_timer_create(flush_cb, 400, NULL); }
 void rooms_mode_enter(void) {
     s_active = true;
     tui_clear();

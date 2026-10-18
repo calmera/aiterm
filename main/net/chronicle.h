@@ -65,6 +65,7 @@ char*     chronicle_test_account_json(void);  // {"ok":true,"principal":..,"acco
 esp_err_t chronicle_fresh_token(char* err, size_t err_len);  // refreshes the GitHub token when it is about to lapse (saved)
 void      chronicle_emit_info(const char* text);  // sign-in progress lines for the TUI
 void      chronicle_emit(chron_event_t ev, const char* room_id, const char* text);
+char*     chronicle_debug_json(void);  // connection / pull-loop / model counters for the setup server (free())
 
 #ifdef __cplusplus
 }
