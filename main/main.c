@@ -166,10 +166,24 @@ static void cb_about(void) {
 }
 static void cb_ssh_host_changed(void) { update_status_line(); }
 static void cb_chronicle_signin(void) { ui_pop(); view_signin_start(); }
+// Settings -> Power off (confirmed). The WHY2025 BSP parks the badge below the IP5306's light-load
+// threshold (panel off, radio + keypad in reset, P4 in deep sleep); on the cells the IP5306 then
+// cuts the power and the power button starts the badge again. See DECISIONS.md 34.
+static void cb_power_off(void) {
+    while (ui_stack_depth() > 1) ui_pop();
+    if (agent_busy()) agent_abort();
+    tui_append_line(TUI_STYLE_SYSTEM, "Powering off — press the power button to start the badge again");
+    update_status_line();
+    lv_refr_now(NULL);                 // paint the message before the panel goes dark
+    vTaskDelay(pdMS_TO_TICKS(600));
+    esp_err_t r = bsp_power_off(false);  // does not return on the WHY2025 target
+    tui_appendf(TUI_STYLE_ERROR, "[error] power off not supported here: %s", esp_err_to_name(r));
+}
 static const settings_callbacks_t s_settings_cb = {
     .on_mode_changed = cb_mode_changed, .on_theme_changed = cb_theme_changed, .on_font_changed = cb_font_changed,
     .on_mcp_toggled = cb_mcp_toggled, .on_setup_from_phone = cb_setup, .on_forget_wifi = cb_forget_wifi,
     .on_about = cb_about, .on_ssh_host_changed = cb_ssh_host_changed, .on_chronicle_signin = cb_chronicle_signin,
+    .on_power_off = cb_power_off,
 };
 
 static void mcp_done_cb(void* arg) { (void)arg; update_status_line(); tui_appendf(TUI_STYLE_MUTED, "MCP: %d tools from %d server(s)", tools_mcp_count(), app_config()->mcp_count); }
@@ -274,7 +288,7 @@ static void ui_task(void* arg) {
     s_shown_mode = app_config()->ui.default_mode;
     apply_ui_config();
     tui_set_prompt(prompt_for_mode(app_config()->ui.default_mode));
-    tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
+    tui_appendf(TUI_STYLE_SYSTEM, "ai-terminal %s — F1 settings (incl. power off) · Meta+M mode · Meta+N new session · Esc cancel/close", aiterm_version());
     if (app_config()->ui.default_mode == CFG_MODE_ROOMS) rooms_mode_enter();
     xTaskCreatePinnedToCore(net_boot_task, "netboot", 8192, NULL, 5, NULL, 1);
     ui_task_loop();

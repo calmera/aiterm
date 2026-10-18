@@ -9,7 +9,7 @@
 #define MAX_ITEMS 40
 cfg_mode_t app_next_mode(cfg_mode_t m);  // main.c: AI -> SSH -> Rooms (when signed in) -> AI
 
-typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_ROOMS, IT_SIGNIN, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_HEADER } item_kind_t;
+typedef enum { IT_MODE, IT_INFERENCE, IT_MCP, IT_SSH_HOST, IT_ROOMS, IT_SIGNIN, IT_THEME, IT_FONT, IT_SETUP, IT_WIFI, IT_FORGET, IT_ABOUT, IT_POWER, IT_HEADER } item_kind_t;
 typedef struct { item_kind_t kind; int index; } item_t;
 
 static ui_view_t s_view;
@@ -21,6 +21,7 @@ static int s_scroll = 0;
 static lv_obj_t* s_rows[MAX_ITEMS];
 static lv_obj_t* s_rows_bg[MAX_ITEMS];
 static int s_visible = 0;
+static bool s_power_armed = false;  // "Power off" needs a second Enter
 
 static void build_items(void) {
     app_config_t* c = app_config();
@@ -38,6 +39,7 @@ static void build_items(void) {
     s_items[s_n++] = (item_t){IT_WIFI, 0};
     s_items[s_n++] = (item_t){IT_FORGET, 0};
     s_items[s_n++] = (item_t){IT_ABOUT, 0};
+    s_items[s_n++] = (item_t){IT_POWER, 0};
 }
 
 static void item_text(const item_t* it, char* buf, size_t n) {
@@ -73,6 +75,10 @@ static void item_text(const item_t* it, char* buf, size_t n) {
         case IT_FORGET: snprintf(buf, n, "Forget Wi-Fi         (reboots into setup)"); break;
         case IT_ABOUT: snprintf(buf, n, "About                v%s · heap %u KB · psram %u KB", CONFIG_AITERM_FW_VERSION,
                                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024)); break;
+        case IT_POWER:
+            if (s_power_armed) snprintf(buf, n, "Power off            Enter again switches the badge off · Esc cancels");
+            else snprintf(buf, n, "Power off            →  (the power button starts the badge again)");
+            break;
     }
 }
 
@@ -106,6 +112,11 @@ static void activate(void) {
         case IT_SIGNIN: if (s_cb.on_chronicle_signin) s_cb.on_chronicle_signin(); return;
         case IT_FORGET: if (s_cb.on_forget_wifi) s_cb.on_forget_wifi(); return;
         case IT_ABOUT: if (s_cb.on_about) s_cb.on_about(); return;
+        case IT_POWER:
+            if (!s_power_armed) { s_power_armed = true; break; }
+            s_power_armed = false;
+            if (s_cb.on_power_off) s_cb.on_power_off();
+            return;
         default: break;
     }
     render();
@@ -113,6 +124,13 @@ static void activate(void) {
 
 static void on_key(ui_view_t* v, const ui_key_t* k) {
     (void)v;
+    // An armed "Power off" is disarmed by anything that is not the confirming Enter/Right/Space.
+    bool confirm = k->is_nav ? (k->nav == UI_NAV_ENTER || k->nav == UI_NAV_RIGHT) : (k->ascii == ' ');
+    if (s_power_armed && !confirm) {
+        s_power_armed = false;
+        render();
+        if (k->is_nav && k->nav == UI_NAV_ESC) return;  // Esc only cancels the power-off
+    }
     if (!k->is_nav) {
         if (k->ascii == ' ') activate();
         return;
@@ -165,7 +183,7 @@ void view_settings_show(const settings_callbacks_t* cb) {
     s_view.on_resize = on_resize;
     ui_view_create_root(&s_view, "Settings · ↑↓ move · Enter change · Esc back");
     build_items();
-    s_sel = 0; s_scroll = 0;
+    s_sel = 0; s_scroll = 0; s_power_armed = false;
     layout();
     ui_push(&s_view);
 }

@@ -22,7 +22,7 @@ Artifacts are in `out/`:
 | `out/flash.sh` | writes `out/parts/` at their offsets (saved settings in NVS are kept); `ERASE_SETTINGS=1` writes the merged image instead; port auto-detected on macOS, 460800 baud, `--no-stub` |
 | `out/flasher_args.json` | the offsets the image was built from |
 
-Built image: 2,313,616 bytes (app 2.18 MB of the 6 MB factory partition; SSH on). SHA-256 in `WORKLOG.md`.
+Built image: 2,520,048 bytes (app 2.39 MB of the 6 MB factory partition; SSH on). SHA-256 in `WORKLOG.md`.
 
 ```sh
 pipx install esptool            # any recent esptool (>= 4.8) knows the ESP32-P4
@@ -94,6 +94,15 @@ gauge `████░░░░ 42%` coloured green/yellow/red by usage of the m
 report usage) · session cost from the **price per 1M tokens** fields, or the token total when no
 prices are set · tool count. `Meta+N` starts a new session and resets the counters.
 
+**Powering off.** `F1` → *Power off*, then Enter a second time to confirm. The badge is powered by
+an IP5306 power-bank IC whose button is wired to that chip only, so the firmware cannot cut the
+supply itself. Instead it switches the panel off, holds the radio in reset (which also takes the
+keyboard controller and both backlights down) and puts the P4 into deep sleep. Under that load the
+IP5306 switches its output off by itself after about half a minute when the badge runs from its
+cells; the power button then starts the badge again. On USB power the IP5306 keeps the output up,
+so the badge stays dark and asleep until it is reset: unplug and replug USB, or run `out/flash.sh`
+or esptool, which toggles the CH340's reset lines. There is no reset button on the badge.
+
 ### Endpoints that work
 * OpenAI: `https://api.openai.com/v1`, model e.g. `gpt-4.1-mini`
 * Ollama: `http://<host>:11434/v1` (empty API key)
@@ -147,7 +156,7 @@ agent steps and cost are not rendered, no room search, no unread counts.
 |---|---|
 | `Enter` | send message (AI) / open the SSH terminal (SSH mode) |
 | `Esc` | close the current full-screen view; in the chat: cancel the running request |
-| `F1` or `Meta+,` | Settings |
+| `F1` or `Meta+,` | Settings (also *Power off*: Enter twice) |
 | `Meta+M` | cycle AI / SSH / Rooms mode (Rooms only once signed in) |
 | `Meta+N` | new AI session (clears the conversation); in Rooms: the room picker |
 | `Meta+L` (Rooms) | pick a room or an agent · `Tab` completes an `@name` |
