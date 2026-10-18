@@ -38,6 +38,19 @@ Each entry: what was decided, and one line of reasoning.
 33. **Rooms are rendered as the record, nothing is echoed locally** — a posted message appears when its operation comes back through the consumer (about a second), so the badge never shows a message the store did not accept.
 34. **Power off = deep sleep below the IP5306's light-load threshold** — the carrier's power IC is an IP5306 power-bank chip (carrier schematic, `Carrier/power.kicad_sch`, netlist exported with kicad-cli 9.0.9); its KEY pin reaches only the power button (R15 → PWR_BUTTON1), so the P4 cannot switch the badge's 5 V rail, and the stock firmware (BadgeVMS, official and Tonemon fork) has no power-off either. The one software-reachable "off" is the IP5306's own light-load shutdown (standard IP5306: output off after 32 s under ~45 mA, from the cells). `bsp_power_off()` for the WHY2025 target (vendored BSP, `targets/why2025/badge_bsp_power.c`) sends DISPOFF + SLPIN to the ST7703, asserts the panel reset (GPIO 17), holds the C6 in reset (GPIO 12 low, RTC hold) — which also resets the TCA8418 and lets both AP3032 CTRL pins fall to their 100 kΩ pull-downs, because the backlights are driven by the C6's GPIO 15/10 PWM (set to 10 % by the stock slave at boot) and the P4 has no path to them (the R16 link from P4 GPIO 5 to DISPLAY_BL is DNP) — and enters deep sleep with no wake source. Wake is a reset: the IP5306 power cycle via the power button (cells), USB re-plug, or the CH340's DTR/RTS. Nothing else can wake it: the badge has no reset button (the M.2 card's EN and BOOT are driven only by the CH340's auto-reset transistors), and the TCA8418 INT line goes to the J7 header, not to the P4 — `BSP_KBD_INT` (GPIO 2) is in fact the USB mux select (`USB_CS`), which is why keyboard interrupts never fired (DECISIONS deviation 10). Confirmation is a second Enter on the Settings item; no dedicated key. Not verified on hardware yet: that the C6's GPIO 15 pad does not pull the display backlight up while the C6 sits in reset (if it does, the IP5306 will not trip and the fix is to populate R16 and hold GPIO 5 low).
 
+35. **Display init matches the stock firmware (BadgeVMS, BONO panel), not the upstream BSP** — the
+    display showed a 1-2 px horizontal jitter at irregular intervals. Compared against the stock
+    firmware on this hardware (Tonemon/BadgeVMS, `CONFIG_SCREEN_TYPE_BONO`): same DSI bus (2 lanes,
+    1 Gbps), same DPI timing (47 MHz, 120/60/106, 20/4/20), and IDF 5.5.4 vs 6.0.2 program the DSI
+    host/bridge/PHY identically for RGB565 (sources diffed). Two things differed at the panel: the
+    ST7703 init table's B3h first byte (BSP 0x13, stock and every other ST7703 sequence 0x10) and
+    the order (stock starts the DPI video stream, then sends the init table incl. sleep-out and
+    display-on, like the Linux st7703 driver; the BSP sends the table in command mode and starts the
+    stream afterwards). The B3h byte now follows the stock. The stock init order was tried
+    (build 22) and left the panel dark on IDF 6.0.2 with a clean log, so the command-mode init
+    stays. No DSI underrun was ever logged, so PSRAM bandwidth was ruled out. Result (build 23):
+    the B3h byte alone removed the jitter; the display is stable with 0x10.
+
 ## Hardware bring-up deviations from the upstream badge.team BSP (2026-10-17)
 The vendored `components/badge-bsp` WHY2025 target (commit c663c68) differs from what the badge's
 stock firmware (BadgeVMS) does on the real hardware. Each change below was made after observing the
@@ -63,3 +76,6 @@ failure on a production badge; keep them when updating the BSP.
 15. **`bsp_power_initialize()` / `bsp_power_off()` implemented** (`targets/why2025/badge_bsp_power.c`,
     pins in `why2025_hardware.h`): power off is panel off + C6/keypad reset hold + deep sleep, see
     decision 34; init releases any GPIO hold left from it.
+16. **ST7703 B3h first parameter 0x10 like the stock firmware** (`targets/why2025/why2025_lcd_init_cmds.h`)
+    instead of the BSP's 0x13; the init stays in command mode (`init_in_command_mode = true`), the
+    stock's video-first order leaves this panel dark on IDF 6.0.2, see decision 35.

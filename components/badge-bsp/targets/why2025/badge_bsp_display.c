@@ -102,7 +102,11 @@ static esp_err_t bsp_display_initialize_panel(void) {
             },
         .init_cmds      = custom_init,
         .init_cmds_size = sizeof(custom_init) / sizeof(st7703_lcd_init_cmd_t),
-        .init_in_command_mode    = true
+        // Send the init table in command mode, then start the DPI video stream (upstream BSP order). The
+        // stock firmware (BadgeVMS, IDF 5.5.4) starts the stream first and sends the table while it runs;
+        // tried here on 2026-10-18 (build 22) with IDF 6.0.2: the ID still read fine but the panel stayed
+        // dark (backlight halo only), so keep the command-mode init.
+        .init_in_command_mode    = true,
     };
     const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num          = BSP_LCD_RESET_PIN,
